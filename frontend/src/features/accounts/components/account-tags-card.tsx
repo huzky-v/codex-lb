@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { TagMultiSelect } from "@/components/tag-multi-select";
-import { Button } from "@/components/ui/button";
 import { useAccountTags } from "@/features/accounts/hooks/use-accounts";
 
 export type AccountTagsCardProps = {
@@ -11,49 +10,53 @@ export type AccountTagsCardProps = {
   onSave: (accountId: string, tags: string[]) => Promise<void>;
 };
 
+type PendingSelection = {
+  persistedKey: string;
+  tags: string[];
+};
+
 function toComparableKey(tags: string[]): string {
   return [...new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))].sort().join("::");
 }
 
 export function AccountTagsCard({ accountId, tags, disabled, onSave }: AccountTagsCardProps) {
   const { data: availableTags = [], isLoading } = useAccountTags();
-  const [selectedTags, setSelectedTags] = useState<string[]>(tags);
+  const persistedKey = `${accountId}::${toComparableKey(tags)}`;
+  const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const selectedTags = pendingSelection?.persistedKey === persistedKey ? pendingSelection.tags : tags;
 
-  useEffect(() => {
-    setSelectedTags(tags);
-  }, [tags]);
+  function handleChange(nextTags: string[]) {
+    if (toComparableKey(nextTags) === toComparableKey(selectedTags)) {
+      return;
+    }
 
-  const isDirty = useMemo(
-    () => toComparableKey(selectedTags) !== toComparableKey(tags),
-    [selectedTags, tags],
-  );
+    setPendingSelection({ persistedKey, tags: nextTags });
+    setIsSaving(true);
+
+    void onSave(accountId, nextTags)
+      .catch(() => {
+        setPendingSelection(null);
+      })
+      .finally(() => {
+        setIsSaving(false);
+      });
+  }
 
   return (
     <div className="rounded-md border bg-background/60 px-3 py-2">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Account tags</p>
-          <p className="mt-1 text-xs text-muted-foreground">Used by API key tag pools.</p>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs"
-          disabled={disabled || !isDirty}
-          onClick={() => void onSave(accountId, selectedTags)}
-        >
-          Save
-        </Button>
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Account tags</p>
+        <p className="mt-1 text-xs text-muted-foreground">Used by API key tag pools.</p>
       </div>
       <div className="mt-3">
         <TagMultiSelect
           value={selectedTags}
-          onChange={setSelectedTags}
+          onChange={handleChange}
           options={availableTags}
           placeholder="No tags"
           loading={isLoading}
-          disabled={disabled}
+          disabled={disabled || isSaving}
           allowCustomValues
           searchPlaceholder="Search or create tags..."
         />
