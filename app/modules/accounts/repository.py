@@ -66,10 +66,7 @@ class AccountsRepository:
 
     async def list_defined_tags(self) -> list[str]:
         result = await self._session.execute(
-            select(Tag.name)
-            .join(AccountTag, AccountTag.tag_name == Tag.name)
-            .distinct()
-            .order_by(Tag.name.asc())
+            select(Tag.name).join(AccountTag, AccountTag.tag_name == Tag.name).distinct().order_by(Tag.name.asc())
         )
         return [str(name) for name in result.scalars().all()]
 
@@ -83,9 +80,7 @@ class AccountsRepository:
 
         if desired_tags:
             existing_tags = set(
-                (
-                    await self._session.execute(select(Tag.name).where(Tag.name.in_(desired_tags)))
-                ).scalars().all()
+                (await self._session.execute(select(Tag.name).where(Tag.name.in_(desired_tags)))).scalars().all()
             )
             for missing_tag in desired_tags - existing_tags:
                 self._session.add(Tag(name=missing_tag))

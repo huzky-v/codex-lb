@@ -269,9 +269,7 @@ class ApiKeysRepository:
 
         if desired_tags:
             existing_tags = set(
-                (
-                    await self._session.execute(select(Tag.name).where(Tag.name.in_(desired_tags)))
-                ).scalars().all()
+                (await self._session.execute(select(Tag.name).where(Tag.name.in_(desired_tags)))).scalars().all()
             )
             for missing_tag in desired_tags - existing_tags:
                 self._session.add(Tag(name=missing_tag))

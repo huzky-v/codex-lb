@@ -602,11 +602,7 @@ def _filter_accounts_for_tags(accounts: Iterable[Account], tags: Collection[str]
     tag_set = {tag.strip().lower() for tag in tags if tag.strip()}
     if not tag_set:
         return list(accounts)
-    return [
-        account
-        for account in accounts
-        if any(link.tag_name in tag_set for link in account.tag_links)
-    ]
+    return [account for account in accounts if any(link.tag_name in tag_set for link in account.tag_links)]
 
 
 def _clone_usage_history(entry: UsageHistory) -> UsageHistory:
