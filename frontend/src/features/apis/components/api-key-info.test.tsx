@@ -6,88 +6,85 @@ import { createApiKey } from "@/test/mocks/factories";
 import { ApiKeyInfo } from "./api-key-info";
 
 describe("ApiKeyInfo", () => {
-	it("renders key details with prefix and models", () => {
-		const apiKey = createApiKey({
-			name: "My Key",
-			keyPrefix: "sk-abc123",
-			allowedModels: ["gpt-4o", "gpt-5.1"],
-		});
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
+	it("renders prefix, allowed models, and enforcement metadata", () => {
+		render(
+			<ApiKeyInfo
+				apiKey={createApiKey({
+					keyPrefix: "sk-special",
+					allowedModels: ["gpt-5.1", "gpt-4o-mini"],
+					enforcedModel: "gpt-5.1",
+					enforcedReasoningEffort: "high",
+				})}
+			/>,
+		);
 
 		expect(screen.getByText("Key Details")).toBeInTheDocument();
-		expect(screen.getByText("sk-abc123")).toBeInTheDocument();
-		expect(screen.getByText("gpt-4o, gpt-5.1")).toBeInTheDocument();
+		expect(screen.getByText("sk-special")).toBeInTheDocument();
+		expect(screen.getByText("gpt-5.1, gpt-4o-mini")).toBeInTheDocument();
+		expect(screen.getByText("Enforced Model")).toBeInTheDocument();
+		expect(screen.getByText("Enforced Effort")).toBeInTheDocument();
 	});
 
-	it("renders All models when allowedModels is null", () => {
-		const apiKey = createApiKey({ allowedModels: null });
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
+	it("falls back to all models and never expiry when the key is unrestricted", () => {
+		render(
+			<ApiKeyInfo
+				apiKey={createApiKey({
+					allowedModels: null,
+					expiresAt: null,
+					enforcedModel: null,
+					enforcedReasoningEffort: null,
+				})}
+			/>,
+		);
 
 		expect(screen.getByText("All models")).toBeInTheDocument();
-	});
-
-	it("renders enforced model and effort when set", () => {
-		const apiKey = createApiKey({
-			allowedModels: ["gpt-4o"],
-			enforcedModel: "gpt-5.1",
-			enforcedReasoningEffort: "high",
-		});
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
-
-		expect(screen.getByText("Enforced Model")).toBeInTheDocument();
-		expect(screen.getByText("gpt-5.1")).toBeInTheDocument();
-		expect(screen.getByText("high")).toBeInTheDocument();
-	});
-
-	it("hides enforced model and effort when null", () => {
-		const apiKey = createApiKey({
-			enforcedModel: null,
-			enforcedReasoningEffort: null,
-		});
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
-
+		expect(screen.getByText("Never")).toBeInTheDocument();
 		expect(screen.queryByText("Enforced Model")).not.toBeInTheDocument();
 		expect(screen.queryByText("Enforced Effort")).not.toBeInTheDocument();
 	});
 
-	it("renders expiry as Never when null", () => {
-		const apiKey = createApiKey({ expiresAt: null });
+	it("marks expired keys clearly", () => {
+		render(
+			<ApiKeyInfo
+				apiKey={createApiKey({
+					expiresAt: "2020-01-01T00:00:00Z",
+				})}
+			/>,
+		);
 
-		render(<ApiKeyInfo apiKey={apiKey} />);
-
-		expect(screen.getByText("Never")).toBeInTheDocument();
+		expect(screen.getByText("Expired")).toBeInTheDocument();
 	});
 
-	it("renders No usage recorded when no usage", () => {
-		const apiKey = createApiKey({
-			usageSummary: {
-				requestCount: 0,
-				totalTokens: 0,
-				cachedInputTokens: 0,
-				totalCostUsd: 0,
-			},
-		});
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
+	it("shows no usage message when the key has no recorded traffic", () => {
+		render(
+			<ApiKeyInfo
+				apiKey={createApiKey({
+					usageSummary: {
+						requestCount: 0,
+						totalTokens: 0,
+						cachedInputTokens: 0,
+						totalCostUsd: 0,
+					},
+				})}
+			/>,
+		);
 
 		expect(screen.getByText("No usage recorded")).toBeInTheDocument();
 	});
 
-	it("renders usage data inline", () => {
-		const apiKey = createApiKey({
-			usageSummary: {
-				requestCount: 150,
-				totalTokens: 50_000,
-				cachedInputTokens: 10_000,
-				totalCostUsd: 1.23,
-			},
-		});
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
+	it("formats usage totals when summary data exists", () => {
+		render(
+			<ApiKeyInfo
+				apiKey={createApiKey({
+					usageSummary: {
+						requestCount: 150,
+						totalTokens: 50_000,
+						cachedInputTokens: 10_000,
+						totalCostUsd: 1.23,
+					},
+				})}
+			/>,
+		);
 
 		expect(screen.getByText(/50K tok/)).toBeInTheDocument();
 		expect(screen.getByText(/10K cached/)).toBeInTheDocument();
@@ -95,63 +92,44 @@ describe("ApiKeyInfo", () => {
 		expect(screen.getByText(/\$1.23/)).toBeInTheDocument();
 	});
 
-	it("renders No limits configured when no limits", () => {
-		const apiKey = createApiKey({ limits: [] });
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
+	it("shows an empty limits state when no limits are configured", () => {
+		render(<ApiKeyInfo apiKey={createApiKey({ limits: [] })} />);
 
 		expect(screen.getByText("No limits configured")).toBeInTheDocument();
 	});
 
-	it("renders limit count when limits exist", () => {
-		const apiKey = createApiKey({
-			limits: [
-				{
-					id: 1,
-					limitType: "total_tokens",
-					limitWindow: "weekly",
-					maxValue: 1_000_000,
-					currentValue: 250_000,
-					modelFilter: null,
-					resetAt: new Date().toISOString(),
-				},
-				{
-					id: 2,
-					limitType: "cost_usd",
-					limitWindow: "monthly",
-					maxValue: 5_000_000,
-					currentValue: 1_000_000,
-					modelFilter: null,
-					resetAt: new Date().toISOString(),
-				},
-			],
-		});
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
+	it("renders configured token and cost limits with model filters", () => {
+		render(
+			<ApiKeyInfo
+				apiKey={createApiKey({
+					limits: [
+						{
+							id: 1,
+							limitType: "total_tokens",
+							limitWindow: "weekly",
+							maxValue: 1_000_000,
+							currentValue: 750_000,
+							modelFilter: "gpt-5.1",
+							resetAt: "2026-01-08T00:00:00Z",
+						},
+						{
+							id: 2,
+							limitType: "cost_usd",
+							limitWindow: "monthly",
+							maxValue: 5_000_000,
+							currentValue: 1_500_000,
+							modelFilter: null,
+							resetAt: "2026-02-01T00:00:00Z",
+						},
+					],
+				})}
+			/>,
+		);
 
 		expect(screen.getByText("2 configured")).toBeInTheDocument();
-	});
-
-	it("renders individual limit details with progress bars", () => {
-		const apiKey = createApiKey({
-			limits: [
-				{
-					id: 1,
-					limitType: "total_tokens",
-					limitWindow: "weekly",
-					maxValue: 1_000_000,
-					currentValue: 750_000,
-					modelFilter: "gpt-5.1",
-					resetAt: new Date().toISOString(),
-				},
-			],
-		});
-
-		render(<ApiKeyInfo apiKey={apiKey} />);
-
-		expect(
-			screen.getByText(/Total Tokens \(weekly, gpt-5.1\)/),
-		).toBeInTheDocument();
+		expect(screen.getByText(/Total Tokens \(weekly, gpt-5.1\)/)).toBeInTheDocument();
 		expect(screen.getByText(/750K \/ 1M/)).toBeInTheDocument();
+		expect(screen.getByText(/Cost \(USD\) \(monthly, all\)/)).toBeInTheDocument();
+		expect(screen.getByText(/\$1.50 \/ \$5.00/)).toBeInTheDocument();
 	});
 });

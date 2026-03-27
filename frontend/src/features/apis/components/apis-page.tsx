@@ -93,13 +93,16 @@ export function ApisPage() {
 		getErrorMessageOrNull(regenerateMutation.error);
 
 	const handleCreate = async (payload: ApiKeyCreateRequest) => {
-		const created = await createMutation.mutateAsync(payload);
+		const created = await createMutation.mutateAsync(payload).catch(() => null);
+		if (!created) return;
 		createdDialog.show(created.key);
 	};
 
 	const handleUpdate = async (payload: ApiKeyUpdateRequest) => {
 		if (!editDialog.data) return;
-		await updateMutation.mutateAsync({ keyId: editDialog.data.id, payload });
+		await updateMutation
+			.mutateAsync({ keyId: editDialog.data.id, payload })
+			.catch(() => null);
 	};
 
 	return (
@@ -135,16 +138,21 @@ export function ApisPage() {
 						busy={mutationBusy}
 						onEdit={(apiKey) => editDialog.show(apiKey)}
 						onToggleActive={(apiKey) => {
-							void updateMutation.mutateAsync({
-								keyId: apiKey.id,
-								payload: { isActive: !apiKey.isActive },
-							});
+							void updateMutation
+								.mutateAsync({
+									keyId: apiKey.id,
+									payload: { isActive: !apiKey.isActive },
+								})
+								.catch(() => null);
 						}}
 						onDelete={(apiKey) => deleteDialog.show(apiKey)}
 						onRegenerate={(apiKey) => {
-							void regenerateMutation.mutateAsync(apiKey.id).then((result) => {
-								createdDialog.show(result.key);
-							});
+							void regenerateMutation
+								.mutateAsync(apiKey.id)
+								.then((result) => {
+									createdDialog.show(result.key);
+								})
+								.catch(() => null);
 						}}
 					/>
 				</div>
@@ -181,9 +189,12 @@ export function ApisPage() {
 				onOpenChange={deleteDialog.onOpenChange}
 				onConfirm={() => {
 					if (!deleteDialog.data) return;
-					void deleteMutation.mutateAsync(deleteDialog.data.id).finally(() => {
-						deleteDialog.hide();
-					});
+					void deleteMutation
+						.mutateAsync(deleteDialog.data.id)
+						.catch(() => null)
+						.finally(() => {
+							deleteDialog.hide();
+						});
 				}}
 			/>
 
