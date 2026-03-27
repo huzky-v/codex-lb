@@ -41,8 +41,9 @@ describe("apis page integration", () => {
 		renderWithProviders(<App />);
 
 		await user.click(await screen.findByRole("button", { name: "Create API Key" }));
-		await user.type(screen.getByLabelText("Name"), "Created from APIs page");
-		await user.click(screen.getByRole("button", { name: "Create" }));
+		const createDialog = await screen.findByRole("dialog", { name: "Create API key" });
+		await user.type(within(createDialog).getByLabelText("Name"), "Created from APIs page");
+		await user.click(within(createDialog).getByRole("button", { name: "Create" }));
 
 		const dialog = await screen.findByRole("dialog", { name: "API key created" });
 		expect(within(dialog).getByText(/sk-test-generated-/)).toBeInTheDocument();
@@ -102,8 +103,9 @@ describe("apis page integration", () => {
 		renderWithProviders(<App />);
 
 		await user.click(await screen.findByRole("button", { name: "Create API Key" }));
-		await user.type(screen.getByLabelText("Name"), "Broken create");
-		await user.click(screen.getByRole("button", { name: "Create" }));
+		const createDialog = await screen.findByRole("dialog", { name: "Create API key" });
+		await user.type(within(createDialog).getByLabelText("Name"), "Broken create");
+		await user.click(within(createDialog).getByRole("button", { name: "Create" }));
 
 		expect(await screen.findByText("Invalid create payload")).toBeInTheDocument();
 	});
