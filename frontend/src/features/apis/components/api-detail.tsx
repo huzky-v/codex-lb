@@ -48,7 +48,6 @@ function accumulateData(
 export function ApiDetail({
 	apiKey,
 	trends,
-	usage7Day: _usage7Day,
 	busy,
 	onEdit,
 	onDelete,

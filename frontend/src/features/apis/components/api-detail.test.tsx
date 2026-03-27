@@ -8,16 +8,17 @@ import { renderWithProviders } from "@/test/utils";
 import { ApiDetail } from "./api-detail";
 
 const defaultCallbacks = {
-	busy: false,
 	onEdit: vi.fn(),
 	onDelete: vi.fn(),
 	onRegenerate: vi.fn(),
 	onToggleActive: vi.fn(),
 };
 
+const defaultProps = { ...defaultCallbacks, busy: false };
+
 describe("ApiDetail", () => {
 	it("renders empty state when no key is selected", () => {
-		renderWithProviders(<ApiDetail apiKey={null} {...defaultCallbacks} />);
+		renderWithProviders(<ApiDetail apiKey={null} {...defaultProps} />);
 
 		expect(screen.getByText("Select an API key")).toBeInTheDocument();
 		expect(
@@ -32,7 +33,7 @@ describe("ApiDetail", () => {
 				apiKey={apiKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 			/>,
 		);
 
@@ -49,7 +50,7 @@ describe("ApiDetail", () => {
 				apiKey={activeKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 			/>,
 		);
 
@@ -66,7 +67,7 @@ describe("ApiDetail", () => {
 				apiKey={inactiveKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 			/>,
 		);
 
@@ -83,7 +84,7 @@ describe("ApiDetail", () => {
 				apiKey={apiKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 			/>,
 		);
 
@@ -100,7 +101,7 @@ describe("ApiDetail", () => {
 				apiKey={apiKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 				onToggleActive={onToggleActive}
 			/>,
 		);
@@ -119,7 +120,7 @@ describe("ApiDetail", () => {
 				apiKey={apiKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 				onDelete={onDelete}
 			/>,
 		);
@@ -135,8 +136,8 @@ describe("ApiDetail", () => {
 				apiKey={apiKey}
 				trends={null}
 				usage7Day={null}
+				{...defaultProps}
 				busy
-				{...defaultCallbacks}
 			/>,
 		);
 
@@ -153,7 +154,7 @@ describe("ApiDetail", () => {
 				apiKey={apiKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 			/>,
 		);
 
@@ -174,7 +175,7 @@ describe("ApiDetail", () => {
 				apiKey={apiKey}
 				trends={null}
 				usage7Day={null}
-				{...defaultCallbacks}
+				{...defaultProps}
 			/>,
 		);
 

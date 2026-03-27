@@ -24,7 +24,6 @@ from app.modules.api_keys.repository import (
     _Unset,
 )
 
-
 _SPARKLINE_DAYS = 7
 _DETAIL_BUCKET_SECONDS = 3600
 
