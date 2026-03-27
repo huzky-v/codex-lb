@@ -90,6 +90,18 @@ async def test_trends_returns_hourly_zero_filled_points_with_bucket_aggregation(
         ),
         RequestLog(
             api_key_id=key_id,
+            request_id="req-trend-d",
+            requested_at=other_bucket + timedelta(minutes=10),
+            model="gpt-5.1",
+            status="ok",
+            input_tokens=4,
+            output_tokens=None,
+            reasoning_tokens=6,
+            cached_input_tokens=0,
+            cost_usd=0.02,
+        ),
+        RequestLog(
+            api_key_id=key_id,
             request_id="req-trend-old",
             requested_at=old_row,
             model="gpt-5.1",
@@ -120,11 +132,11 @@ async def test_trends_returns_hourly_zero_filled_points_with_bucket_aggregation(
 
     assert tokens_by_bucket[_hour_bucket(same_bucket_a)] == pytest.approx(52.0)
     assert cost_by_bucket[_hour_bucket(same_bucket_a)] == pytest.approx(0.2)
-    assert tokens_by_bucket[_hour_bucket(other_bucket)] == pytest.approx(15.0)
-    assert cost_by_bucket[_hour_bucket(other_bucket)] == pytest.approx(0.05)
+    assert tokens_by_bucket[_hour_bucket(other_bucket)] == pytest.approx(25.0)
+    assert cost_by_bucket[_hour_bucket(other_bucket)] == pytest.approx(0.07)
 
-    assert sum(point["v"] for point in payload["tokens"]) == pytest.approx(67.0)
-    assert sum(point["v"] for point in payload["cost"]) == pytest.approx(0.25)
+    assert sum(point["v"] for point in payload["tokens"]) == pytest.approx(77.0)
+    assert sum(point["v"] for point in payload["cost"]) == pytest.approx(0.27)
     assert sum(1 for point in payload["tokens"] if point["v"] == 0) > 0
 
 
@@ -158,6 +170,18 @@ async def test_usage_7d_sums_only_recent_request_logs(async_client):
         ),
         RequestLog(
             api_key_id=key_id,
+            request_id="req-usage-c",
+            requested_at=now - timedelta(hours=3),
+            model="gpt-5.1",
+            status="ok",
+            input_tokens=2,
+            output_tokens=None,
+            reasoning_tokens=7,
+            cached_input_tokens=1,
+            cost_usd=0.03,
+        ),
+        RequestLog(
+            api_key_id=key_id,
             request_id="req-usage-old",
             requested_at=now - timedelta(days=7, minutes=1),
             model="gpt-5.1",
@@ -175,8 +199,8 @@ async def test_usage_7d_sums_only_recent_request_logs(async_client):
     payload = response.json()
     assert payload == {
         "keyId": key_id,
-        "totalTokens": 165,
-        "totalCostUsd": 0.5,
-        "totalRequests": 2,
-        "cachedInputTokens": 20,
+        "totalTokens": 174,
+        "totalCostUsd": 0.53,
+        "totalRequests": 3,
+        "cachedInputTokens": 21,
     }

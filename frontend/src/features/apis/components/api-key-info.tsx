@@ -15,6 +15,7 @@ const LIMIT_TYPE_LABEL: Record<LimitType, string> = {
 
 export type ApiKeyInfoProps = {
 	apiKey: ApiKey;
+	usageSummary?: ApiKey["usageSummary"];
 };
 
 function formatExpiry(value: string | null): string {
@@ -28,12 +29,12 @@ function isExpired(apiKey: ApiKey): boolean {
 	return new Date(apiKey.expiresAt).getTime() < Date.now();
 }
 
-export function ApiKeyInfo({ apiKey }: ApiKeyInfoProps) {
+export function ApiKeyInfo({ apiKey, usageSummary }: ApiKeyInfoProps) {
 	const expired = isExpired(apiKey);
 	const models = apiKey.allowedModels?.join(", ") || "All models";
 	const enforcedModel = apiKey.enforcedModel || null;
 	const enforcedEffort = apiKey.enforcedReasoningEffort || null;
-	const usage = apiKey.usageSummary;
+	const usage = usageSummary ?? apiKey.usageSummary;
 	const hasUsage = usage && usage.requestCount > 0;
 
 	return (

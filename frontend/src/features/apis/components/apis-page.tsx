@@ -93,16 +93,13 @@ export function ApisPage() {
 		getErrorMessageOrNull(regenerateMutation.error);
 
 	const handleCreate = async (payload: ApiKeyCreateRequest) => {
-		const created = await createMutation.mutateAsync(payload).catch(() => null);
-		if (!created) return;
+		const created = await createMutation.mutateAsync(payload);
 		createdDialog.show(created.key);
 	};
 
 	const handleUpdate = async (payload: ApiKeyUpdateRequest) => {
 		if (!editDialog.data) return;
-		await updateMutation
-			.mutateAsync({ keyId: editDialog.data.id, payload })
-			.catch(() => null);
+		await updateMutation.mutateAsync({ keyId: editDialog.data.id, payload });
 	};
 
 	return (

@@ -3,7 +3,11 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { createApiKey, createApiKeyTrends } from "@/test/mocks/factories";
+import {
+	createApiKey,
+	createApiKeyTrends,
+	createApiKeyUsage7Day,
+} from "@/test/mocks/factories";
 import { renderWithProviders } from "@/test/utils";
 
 import { ApiDetail } from "./api-detail";
@@ -56,6 +60,30 @@ describe("ApiDetail", () => {
 		expect(screen.getByText("Cost")).toBeInTheDocument();
 		expect(screen.getByRole("switch")).toBeInTheDocument();
 		expect(screen.getByText("Key Details")).toBeInTheDocument();
+	});
+
+	it("prefers the 7 day usage payload over list summary usage", () => {
+		renderApiDetail({
+			apiKey: createApiKey({
+				usageSummary: {
+					requestCount: 1,
+					totalTokens: 15,
+					cachedInputTokens: 0,
+					totalCostUsd: 0.01,
+				},
+			}),
+			usage7Day: createApiKeyUsage7Day({
+				totalTokens: 280_000,
+				cachedInputTokens: 45_000,
+				totalRequests: 350,
+				totalCostUsd: 2.47,
+			}),
+		});
+
+		expect(screen.getByText(/280K tok/)).toBeInTheDocument();
+		expect(screen.getByText(/45K cached/)).toBeInTheDocument();
+		expect(screen.getByText(/350 req/)).toBeInTheDocument();
+		expect(screen.getByText(/\$2.47/)).toBeInTheDocument();
 	});
 
 	it("keeps the accumulated toggle interactive when trend data is present", async () => {

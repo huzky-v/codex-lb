@@ -55,6 +55,21 @@ class ApiKeyUsageSummary:
     total_cost_usd: float
 
 
+@dataclass(frozen=True, slots=True)
+class ApiKeyTrendBucket:
+    bucket_epoch: int
+    total_tokens: int
+    total_cost_usd: float
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyUsageTotals:
+    total_requests: int
+    total_tokens: int
+    cached_input_tokens: int
+    total_cost_usd: float
+
+
 class _Unset(Enum):
     UNSET = "UNSET"
 
@@ -495,7 +510,7 @@ class ApiKeysRepository:
         key_id: str,
         since: datetime,
         bucket_seconds: int = 3600,
-    ) -> list[dict]:
+    ) -> list[ApiKeyTrendBucket]:
         bind = self._session.get_bind()
         dialect = bind.dialect.name if bind else "sqlite"
         if dialect == "postgresql":
@@ -509,8 +524,10 @@ class ApiKeysRepository:
             select(
                 bucket_col,
                 func.coalesce(func.sum(RequestLog.input_tokens), 0).label("total_input_tokens"),
-                func.coalesce(func.sum(RequestLog.output_tokens), 0).label("total_output_tokens"),
-                func.coalesce(func.sum(RequestLog.reasoning_tokens), 0).label("total_reasoning_tokens"),
+                func.coalesce(
+                    func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)),
+                    0,
+                ).label("total_output_tokens"),
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
             )
             .where(
@@ -522,19 +539,22 @@ class ApiKeysRepository:
         )
         result = await self._session.execute(stmt)
         return [
-            {
-                "bucket_epoch": int(row.bucket_epoch),
-                "total_tokens": int((row.total_input_tokens or 0) + (row.total_output_tokens or 0)),
-                "total_cost_usd": round(float(row.total_cost_usd or 0.0), 6),
-            }
+            ApiKeyTrendBucket(
+                bucket_epoch=int(row.bucket_epoch),
+                total_tokens=int((row.total_input_tokens or 0) + (row.total_output_tokens or 0)),
+                total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
+            )
             for row in result.all()
         ]
 
-    async def usage_7d(self, key_id: str, since: datetime) -> dict:
+    async def usage_7d(self, key_id: str, since: datetime) -> ApiKeyUsageTotals:
         stmt = select(
             func.count(RequestLog.id).label("total_requests"),
             func.coalesce(func.sum(RequestLog.input_tokens), 0).label("total_input_tokens"),
-            func.coalesce(func.sum(RequestLog.output_tokens), 0).label("total_output_tokens"),
+            func.coalesce(
+                func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)),
+                0,
+            ).label("total_output_tokens"),
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
             func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
         ).where(
@@ -543,12 +563,12 @@ class ApiKeysRepository:
         )
         result = await self._session.execute(stmt)
         row = result.one()
-        return {
-            "total_requests": int(row.total_requests),
-            "total_tokens": int((row.total_input_tokens or 0) + (row.total_output_tokens or 0)),
-            "cached_input_tokens": int(row.cached_input_tokens or 0),
-            "total_cost_usd": round(float(row.total_cost_usd or 0.0), 6),
-        }
+        return ApiKeyUsageTotals(
+            total_requests=int(row.total_requests),
+            total_tokens=int((row.total_input_tokens or 0) + (row.total_output_tokens or 0)),
+            cached_input_tokens=int(row.cached_input_tokens or 0),
+            total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
+        )
 
 
 def _compute_increment(limit: ApiKeyLimit, input_tokens: int, output_tokens: int, cost_microdollars: int) -> int:

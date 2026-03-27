@@ -17,7 +17,9 @@ from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import ApiKey, ApiKeyLimit, LimitType, LimitWindow
 from app.modules.api_keys.repository import (
     _UNSET,
+    ApiKeyTrendBucket,
     ApiKeyUsageSummary,
+    ApiKeyUsageTotals,
     ReservationResult,
     UsageReservationData,
     UsageReservationItemData,
@@ -137,13 +139,13 @@ class ApiKeysRepositoryProtocol(Protocol):
         key_id: str,
         since: datetime,
         bucket_seconds: int = 3600,
-    ) -> list[dict]: ...
+    ) -> list[ApiKeyTrendBucket]: ...
 
     async def usage_7d(
         self,
         key_id: str,
         since: datetime,
-    ) -> dict: ...
+    ) -> ApiKeyUsageTotals: ...
 
 
 class ApiKeyNotFoundError(ValueError):
@@ -655,10 +657,10 @@ class ApiKeysService:
         data = await self._repository.usage_7d(key_id, since)
         return ApiKeyUsage7DayData(
             key_id=key_id,
-            total_tokens=data["total_tokens"],
-            total_cost_usd=data["total_cost_usd"],
-            total_requests=data["total_requests"],
-            cached_input_tokens=data["cached_input_tokens"],
+            total_tokens=data.total_tokens,
+            total_cost_usd=data.total_cost_usd,
+            total_requests=data.total_requests,
+            cached_input_tokens=data.cached_input_tokens,
         )
 
 
@@ -1070,7 +1072,7 @@ def _calculate_cost_microdollars(
 
 def _build_api_key_trends(
     key_id: str,
-    buckets: list[dict],
+    buckets: list[ApiKeyTrendBucket],
     since: datetime,
     bucket_seconds: int,
 ) -> ApiKeyTrendsData:
@@ -1082,8 +1084,8 @@ def _build_api_key_trends(
     cost_by_bucket: dict[int, float] = {}
     tokens_by_bucket: dict[int, int] = {}
     for b in buckets:
-        cost_by_bucket[b["bucket_epoch"]] = b["total_cost_usd"]
-        tokens_by_bucket[b["bucket_epoch"]] = b["total_tokens"]
+        cost_by_bucket[b.bucket_epoch] = b.total_cost_usd
+        tokens_by_bucket[b.bucket_epoch] = b.total_tokens
 
     cost_points: list[ApiKeyTrendsPoint] = []
     tokens_points: list[ApiKeyTrendsPoint] = []

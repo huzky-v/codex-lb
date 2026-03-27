@@ -48,6 +48,7 @@ function accumulateData(
 export function ApiDetail({
 	apiKey,
 	trends,
+	usage7Day,
 	busy,
 	onEdit,
 	onDelete,
@@ -64,6 +65,18 @@ export function ApiDetail({
 			tokens: accumulateData(trends.tokens),
 		};
 	}, [trends, showAccumulated]);
+
+	const usageSummary = useMemo(() => {
+		if (!usage7Day) {
+			return apiKey?.usageSummary ?? null;
+		}
+		return {
+			requestCount: usage7Day.totalRequests,
+			totalTokens: usage7Day.totalTokens,
+			cachedInputTokens: usage7Day.cachedInputTokens,
+			totalCostUsd: usage7Day.totalCostUsd,
+		};
+	}, [apiKey?.usageSummary, usage7Day]);
 
 	if (!apiKey) {
 		return (
@@ -143,7 +156,7 @@ export function ApiDetail({
 				)}
 			</div>
 
-			<ApiKeyInfo apiKey={apiKey} />
+			<ApiKeyInfo apiKey={apiKey} usageSummary={usageSummary} />
 
 			<div className="flex flex-wrap gap-2 border-t pt-4">
 				{apiKey.isActive ? (
