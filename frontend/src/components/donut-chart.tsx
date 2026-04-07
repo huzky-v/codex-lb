@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react";
 import { Cell, Pie, PieChart } from "recharts";
 
 import { buildDonutPalette } from "@/utils/colors";
@@ -68,17 +69,22 @@ function SafeLineTick({
   );
 }
 
-const CHART_SIZE = 144;
+const CHART_SIZE = 164;
 const CHART_MARGIN = 1;
-const PIE_CX = 71;
-const PIE_CY = 71;
+const PIE_CX = 82;
+const PIE_CY = 82;
 const INNER_R = 53;
 const OUTER_R = 71;
+const OUTER_R_HOVER = 78;
 
 export function DonutChart({ items, total, title, subtitle, safeLine }: DonutChartProps) {
   const isDark = useThemeStore((s) => s.theme === "dark");
   const blurred = usePrivacyStore((s) => s.blurred);
   const reducedMotion = useReducedMotion();
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const handleLegendHover = useCallback((index: number | null) => {
+    setHoveredIndex(index);
+  }, []);
   const consumedColor = isDark ? "#404040" : "#d3d3d3";
   const palette = buildDonutPalette(items.length, isDark);
   const normalizedItems = items.map((item, index) => ({
@@ -115,7 +121,7 @@ export function DonutChart({ items, total, title, subtitle, safeLine }: DonutCha
       </div>
 
       <div className="flex items-center gap-6">
-        <div className="relative h-36 w-36 shrink-0 overflow-visible">
+        <div className="relative h-[164px] w-[164px] shrink-0">
             <PieChart width={CHART_SIZE} height={CHART_SIZE} margin={{ top: CHART_MARGIN, right: CHART_MARGIN, bottom: CHART_MARGIN, left: CHART_MARGIN }}>
             <Pie
               data={chartData}
@@ -131,9 +137,22 @@ export function DonutChart({ items, total, title, subtitle, safeLine }: DonutCha
               animationDuration={600}
               animationEasing="ease-out"
             >
-              {chartData.map((entry, index) => (
-                <Cell key={index} fill={entry.fill} />
-              ))}
+              {chartData.map((entry, index) => {
+                const isHovered = hoveredIndex !== null && index === hoveredIndex;
+                const isAnyHovered = hoveredIndex !== null;
+                return (
+                  <Cell
+                    key={`${entry.name}-${index}`}
+                    fill={entry.fill}
+                    outerRadius={isHovered ? OUTER_R_HOVER : OUTER_R}
+                    style={{
+                      transition: isAnyHovered ? "outerRadius 200ms ease-out" : "outerRadius 300ms ease-in",
+                      filter: isAnyHovered && !isHovered ? "opacity(0.5)" : "opacity(1)",
+                      transitionProperty: "outerRadius, filter",
+                    }}
+                  />
+                );
+              })}
             </Pie>
           </PieChart>
           {safeLine && safeLine.riskLevel !== "safe" ? (
@@ -149,7 +168,7 @@ export function DonutChart({ items, total, title, subtitle, safeLine }: DonutCha
               />
             </svg>
           ) : null}
-          <div className="absolute inset-[18px] flex items-center justify-center rounded-full text-center pointer-events-none">
+          <div className="absolute inset-[29px] flex items-center justify-center rounded-full text-center pointer-events-none">
             <div>
               <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Remaining</p>
               <p className="text-base font-semibold tabular-nums">{formatCompactNumber(safeTotal)}</p>
@@ -159,7 +178,14 @@ export function DonutChart({ items, total, title, subtitle, safeLine }: DonutCha
 
         <div className="flex-1 space-y-2.5">
           {normalizedItems.map((item, i) => (
-            <div key={item.id ?? item.label} className="animate-fade-in-up flex items-center justify-between gap-3 text-xs" style={{ animationDelay: `${i * 75}ms` }}>
+            <div
+              key={item.id ?? item.label}
+              role="listitem"
+              className="animate-fade-in-up flex items-center justify-between gap-3 text-xs rounded-md px-1.5 py-1 -mx-1.5 cursor-default"
+              style={{ animationDelay: `${i * 75}ms` }}
+              onMouseEnter={() => handleLegendHover(i)}
+              onMouseLeave={() => handleLegendHover(null)}
+            >
               <div className="flex min-w-0 items-center gap-2">
                 <span
                   aria-hidden
