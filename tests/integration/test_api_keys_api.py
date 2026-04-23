@@ -8,6 +8,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select, update
 
+import app.modules.api_keys.repository as api_keys_repository_module
 import app.modules.proxy.load_balancer as load_balancer_module
 import app.modules.proxy.service as proxy_module
 from app.core.auth import generate_unique_account_id
@@ -2058,6 +2059,57 @@ async def test_reset_expired_limits_background_fallback_advances_windows(async_c
         assert daily_limit.reset_at == now + timedelta(days=1)
         assert weekly_limit.current_value == 0
         assert weekly_limit.reset_at == now + timedelta(days=7)
+
+
+@pytest.mark.asyncio
+async def test_reset_expired_limits_background_fallback_processes_batches(async_client, monkeypatch):
+    monkeypatch.setattr(api_keys_repository_module, "_EXPIRED_LIMIT_RESET_BATCH_SIZE", 2)
+
+    created = await async_client.post(
+        "/api/api-keys/",
+        json={
+            "name": "batched-reset",
+            "allowedModels": [],
+            "limits": [
+                {"limitType": "total_tokens", "limitWindow": "daily", "maxValue": 1000},
+                {"limitType": "input_tokens", "limitWindow": "weekly", "maxValue": 1000},
+                {"limitType": "output_tokens", "limitWindow": "monthly", "maxValue": 1000},
+            ],
+        },
+    )
+    assert created.status_code == 200
+    key_id = created.json()["id"]
+
+    now = utcnow()
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        limits = await repo.get_limits_by_key(key_id)
+        assert len(limits) == 3
+        for limit in limits:
+            limit.current_value = 42
+            if limit.limit_window == LimitWindow.DAILY:
+                limit.reset_at = now - timedelta(days=2)
+            elif limit.limit_window == LimitWindow.WEEKLY:
+                limit.reset_at = now - timedelta(days=14)
+            else:
+                limit.reset_at = now - timedelta(days=60)
+        await session.commit()
+
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        reset_count = await repo.reset_expired_limits(now=now)
+        assert reset_count == 3
+
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        limits = await repo.get_limits_by_key(key_id)
+        by_window = {limit.limit_window: limit for limit in limits}
+        assert by_window[LimitWindow.DAILY].current_value == 0
+        assert by_window[LimitWindow.DAILY].reset_at == now + timedelta(days=1)
+        assert by_window[LimitWindow.WEEKLY].current_value == 0
+        assert by_window[LimitWindow.WEEKLY].reset_at == now + timedelta(days=7)
+        assert by_window[LimitWindow.MONTHLY].current_value == 0
+        assert by_window[LimitWindow.MONTHLY].reset_at == now + timedelta(days=30)
 
 
 @pytest.mark.asyncio
