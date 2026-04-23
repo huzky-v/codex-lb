@@ -1,4 +1,4 @@
-import { Clock3, Monitor, Moon, Palette, Sun } from "lucide-react";
+import { Monitor, Moon, Palette, Sun } from "lucide-react";
 
 import { useThemeStore, type ThemePreference } from "@/hooks/use-theme";
 import { useTimeFormatStore, type TimeFormatPreference } from "@/hooks/use-time-format";
@@ -10,9 +10,9 @@ const THEME_OPTIONS: { value: ThemePreference; label: string; icon: typeof Sun }
   { value: "auto", label: "System", icon: Monitor },
 ];
 
-const TIME_FORMAT_OPTIONS: { value: TimeFormatPreference; label: string; preview: string }[] = [
-  { value: "12h", label: "12h", preview: "03:45 PM" },
-  { value: "24h", label: "24h", preview: "15:45" },
+const TIME_FORMAT_OPTIONS: { value: TimeFormatPreference; label: string }[] = [
+  { value: "12h", label: "12h" },
+  { value: "24h", label: "24h" },
 ];
 
 export function AppearanceSettings() {
@@ -29,12 +29,12 @@ export function AppearanceSettings() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <Palette className="h-4 w-4 text-primary" aria-hidden="true" />
             </div>
-             <div>
-               <h3 className="text-sm font-semibold">Appearance</h3>
-               <p className="text-xs text-muted-foreground">Choose how the interface looks and how time is displayed.</p>
-             </div>
-           </div>
-         </div>
+            <div>
+              <h3 className="text-sm font-semibold">Appearance</h3>
+              <p className="text-xs text-muted-foreground">Choose how the interface looks and how time is displayed.</p>
+            </div>
+          </div>
+        </div>
 
         <div className="flex items-center justify-between rounded-lg border p-3">
           <div>
@@ -63,17 +63,12 @@ export function AppearanceSettings() {
         </div>
 
         <div className="flex items-center justify-between rounded-lg border p-3">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-md bg-primary/10">
-              <Clock3 className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
-            </div>
-            <div>
-              <p className="text-sm font-medium">Time format</p>
-              <p className="text-xs text-muted-foreground">Apply 12h or 24h formatting to datetimes across the dashboard.</p>
-            </div>
+          <div>
+            <p className="text-sm font-medium">Time format</p>
+            <p className="text-xs text-muted-foreground">Apply 12h or 24h formatting to datetimes across the dashboard.</p>
           </div>
           <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-muted/40 p-0.5">
-            {TIME_FORMAT_OPTIONS.map(({ value, label, preview }) => (
+            {TIME_FORMAT_OPTIONS.map(({ value, label }) => (
               <button
                 key={value}
                 type="button"
@@ -87,7 +82,6 @@ export function AppearanceSettings() {
                 )}
               >
                 <span className="block">{label}</span>
-                <span className="block text-[10px] font-normal text-muted-foreground">{preview}</span>
               </button>
             ))}
           </div>
