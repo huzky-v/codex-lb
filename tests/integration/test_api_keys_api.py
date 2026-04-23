@@ -15,7 +15,7 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import utcnow
-from app.db.models import RequestLog
+from app.db.models import LimitWindow, RequestLog
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 
@@ -2014,6 +2014,50 @@ async def test_update_key_reset_usage_requires_explicit_action(async_client):
         assert len(limits) == 1
         assert limits[0].current_value == 0
         assert limits[0].reset_at > original_reset_at
+
+
+@pytest.mark.asyncio
+async def test_reset_expired_limits_background_fallback_advances_windows(async_client):
+    created = await async_client.post(
+        "/api/api-keys/",
+        json={
+            "name": "hourly-reset-fallback",
+            "limits": [
+                {"limitType": "total_tokens", "limitWindow": "daily", "maxValue": 1000},
+                {"limitType": "cost_usd", "limitWindow": "weekly", "maxValue": 1000},
+            ],
+        },
+    )
+    assert created.status_code == 200
+    key_id = created.json()["id"]
+
+    now = utcnow()
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        limits = await repo.get_limits_by_key(key_id)
+        assert len(limits) == 2
+        daily_limit = next(limit for limit in limits if limit.limit_window == LimitWindow.DAILY)
+        weekly_limit = next(limit for limit in limits if limit.limit_window == LimitWindow.WEEKLY)
+        daily_limit.current_value = 123
+        daily_limit.reset_at = now - timedelta(days=2)
+        weekly_limit.current_value = 456
+        weekly_limit.reset_at = now - timedelta(days=14)
+        await session.commit()
+
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        reset_count = await repo.reset_expired_limits(now=now)
+        assert reset_count == 2
+
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        limits = await repo.get_limits_by_key(key_id)
+        daily_limit = next(limit for limit in limits if limit.limit_window == LimitWindow.DAILY)
+        weekly_limit = next(limit for limit in limits if limit.limit_window == LimitWindow.WEEKLY)
+        assert daily_limit.current_value == 0
+        assert daily_limit.reset_at == now + timedelta(days=1)
+        assert weekly_limit.current_value == 0
+        assert weekly_limit.reset_at == now + timedelta(days=7)
 
 
 @pytest.mark.asyncio

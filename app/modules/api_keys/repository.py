@@ -20,6 +20,7 @@ from app.db.models import (
     LimitWindow,
     RequestLog,
 )
+from app.modules.api_keys.limit_windows import advance_limit_reset
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +345,31 @@ class ApiKeysRepository:
         )
         await self._session.commit()
         return result.scalar_one_or_none() is not None
+
+    async def reset_expired_limits(self, *, now: datetime) -> int:
+        result = await self._session.execute(select(ApiKeyLimit).where(ApiKeyLimit.reset_at < now))
+        expired_limits = list(result.scalars().all())
+        if not expired_limits:
+            return 0
+
+        reset_count = 0
+        for limit in expired_limits:
+            update_result = await self._session.execute(
+                update(ApiKeyLimit)
+                .where(ApiKeyLimit.id == limit.id)
+                .where(ApiKeyLimit.reset_at == limit.reset_at)
+                .values(
+                    current_value=0,
+                    reset_at=advance_limit_reset(limit.reset_at, now, limit.limit_window),
+                )
+                .returning(ApiKeyLimit.id)
+            )
+            if update_result.scalar_one_or_none() is not None:
+                reset_count += 1
+
+        if reset_count > 0:
+            await self._session.commit()
+        return reset_count
 
     async def try_reserve_usage(
         self,
