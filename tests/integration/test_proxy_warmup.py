@@ -10,8 +10,8 @@ from sqlalchemy import select
 
 import app.modules.proxy.service as proxy_module
 from app.core.auth import generate_unique_account_id
-from app.core.config.settings import get_settings
 from app.core.clients.proxy import ProxyResponseError
+from app.core.config.settings import get_settings
 from app.core.errors import openai_error
 from app.core.openai.models import CompactResponsePayload
 from app.core.utils.time import utcnow

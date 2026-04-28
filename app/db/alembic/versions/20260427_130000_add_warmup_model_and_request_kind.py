@@ -1,7 +1,7 @@
 """add request kind column
 
 Revision ID: 20260427_130000_add_warmup_model_and_request_kind
-Revises: 20260423_120000_add_api_key_limit_reset_at_index
+Revises: 20260424_000000_merge_dashboard_session_ttl_and_request_log_heads
 Create Date: 2026-04-27
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260427_130000_add_warmup_model_and_request_kind"
-down_revision = "20260423_120000_add_api_key_limit_reset_at_index"
+down_revision = "20260424_000000_merge_dashboard_session_ttl_and_request_log_heads"
 branch_labels = None
 depends_on = None
 
