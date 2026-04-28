@@ -217,7 +217,7 @@ _MAX_TRANSIENT_SAME_ACCOUNT_RETRIES = 3
 _COMPACT_MAX_ACCOUNT_ATTEMPTS = 2
 _STREAM_MAX_ACCOUNT_ATTEMPTS = 3
 _WEBSOCKET_MAX_ACCOUNT_ATTEMPTS = 3
-_WARMUP_MODES = frozenset({"default", "all-or-none", "force-update"})
+_WARMUP_MODES = frozenset({"normal", "strict", "force"})
 _WARMUP_SKIP_INELIGIBLE_PRIMARY = "ineligible_primary_usage"
 _WARMUP_MAX_CONCURRENT_SUBMISSIONS = 5
 _WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES = frozenset(
@@ -1849,11 +1849,11 @@ class ProxyService:
             account for account in target_accounts if _is_warmup_usage_eligible(latest_usage_snapshots.get(account.id))
         ]
 
-        if normalized_mode == "force-update":
+        if normalized_mode == "force":
             accounts_to_submit = target_accounts
-        elif normalized_mode == "all-or-none":
+        elif normalized_mode == "strict":
             if len(eligible_accounts) != len(target_accounts):
-                raise ValueError("all-or-none warmup requires every target account to be usage-eligible")
+                raise ValueError("strict warmup requires every target account to be usage-eligible")
             accounts_to_submit = target_accounts
         else:
             eligible_ids = {account.id for account in eligible_accounts}

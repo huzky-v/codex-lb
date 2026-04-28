@@ -205,7 +205,7 @@ class V1UsageResponse(BaseModel):
 class WarmupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    mode: str = "default"
+    mode: str = "normal"
 
 
 class WarmupSubmittedAccount(BaseModel):

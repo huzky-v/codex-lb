@@ -128,7 +128,7 @@ def _set_warmup_model_env(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_warmup_default_mode_uses_configured_model_and_logs_warmup_kind(async_client, monkeypatch):
+async def test_warmup_normal_mode_uses_configured_model_and_logs_warmup_kind(async_client, monkeypatch):
     _set_warmup_model_env(monkeypatch, "gpt-5.4-nano")
     await _enable_api_key_auth(async_client)
     eligible_id = await _import_account(async_client, "acc-warmup-eligible", "warmup-eligible@example.com")
@@ -136,19 +136,19 @@ async def test_warmup_default_mode_uses_configured_model_and_logs_warmup_kind(as
     await _add_primary_usage(eligible_id, used_percent=0.0, window_minutes=300)
     await _add_primary_usage(ineligible_id, used_percent=11.0, window_minutes=300)
 
-    _, key = await _create_api_key(async_client, name="warmup-default")
+    _, key = await _create_api_key(async_client, name="warmup-normal")
     captured_models: list[str] = []
     _install_successful_warmup_stub(monkeypatch, captured_models)
 
     response = await async_client.post(
         "/v1/warmup",
         headers={"Authorization": f"Bearer {key}"},
-        json={"mode": "default"},
+        json={"mode": "normal"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["mode"] == "default"
+    assert payload["mode"] == "normal"
     assert payload["total_accounts"] == 2
     assert len(payload["submitted"]) == 1
     assert payload["submitted"][0]["account_id"] == eligible_id
@@ -165,14 +165,40 @@ async def test_warmup_default_mode_uses_configured_model_and_logs_warmup_kind(as
 
 
 @pytest.mark.asyncio
-async def test_warmup_all_or_none_rejects_mixed_eligibility_without_upstream_calls(async_client, monkeypatch):
+async def test_warmup_mode_path_route_runs_without_request_body(async_client, monkeypatch):
+    _set_warmup_model_env(monkeypatch, "gpt-5.4-nano")
     await _enable_api_key_auth(async_client)
-    eligible_id = await _import_account(async_client, "acc-all-or-none-eligible", "all-or-none-a@example.com")
-    ineligible_id = await _import_account(async_client, "acc-all-or-none-ineligible", "all-or-none-b@example.com")
+    eligible_id = await _import_account(async_client, "acc-warmup-path-mode", "warmup-path-mode@example.com")
+    await _add_primary_usage(eligible_id, used_percent=0.0, window_minutes=300)
+
+    _, key = await _create_api_key(async_client, name="warmup-path-mode")
+    captured_models: list[str] = []
+    _install_successful_warmup_stub(monkeypatch, captured_models)
+
+    response = await async_client.post(
+        "/v1/warmup/normal",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "normal"
+    assert payload["total_accounts"] == 1
+    assert [entry["account_id"] for entry in payload["submitted"]] == [eligible_id]
+    assert payload["skipped"] == []
+    assert payload["failed"] == []
+    assert captured_models == ["gpt-5.4-nano"]
+
+
+@pytest.mark.asyncio
+async def test_warmup_strict_rejects_mixed_eligibility_without_upstream_calls(async_client, monkeypatch):
+    await _enable_api_key_auth(async_client)
+    eligible_id = await _import_account(async_client, "acc-strict-eligible", "strict-a@example.com")
+    ineligible_id = await _import_account(async_client, "acc-strict-ineligible", "strict-b@example.com")
     await _add_primary_usage(eligible_id, used_percent=0.0, window_minutes=300)
     await _add_primary_usage(ineligible_id, used_percent=5.0, window_minutes=300)
 
-    _, key = await _create_api_key(async_client, name="warmup-all-or-none")
+    _, key = await _create_api_key(async_client, name="warmup-strict")
     called = False
 
     async def _fake_compact(*args, **kwargs):
@@ -186,7 +212,7 @@ async def test_warmup_all_or_none_rejects_mixed_eligibility_without_upstream_cal
     response = await async_client.post(
         "/v1/warmup",
         headers={"Authorization": f"Bearer {key}"},
-        json={"mode": "all-or-none"},
+        json={"mode": "strict"},
     )
 
     assert response.status_code == 400
@@ -212,7 +238,7 @@ async def test_warmup_respects_api_key_account_scope(async_client, monkeypatch):
     response = await async_client.post(
         "/v1/warmup",
         headers={"Authorization": f"Bearer {key}"},
-        json={"mode": "force-update"},
+        json={"mode": "force"},
     )
 
     assert response.status_code == 200
@@ -248,7 +274,7 @@ async def test_warmup_rejects_disallowed_model_without_upstream_calls(async_clie
     response = await async_client.post(
         "/v1/warmup",
         headers={"Authorization": f"Bearer {key}"},
-        json={"mode": "default"},
+        json={"mode": "normal"},
     )
 
     assert response.status_code == 403
@@ -302,7 +328,7 @@ async def test_warmup_runs_parallel_with_max_five_accounts(async_client, monkeyp
     response = await async_client.post(
         "/v1/warmup",
         headers={"Authorization": f"Bearer {key}"},
-        json={"mode": "force-update"},
+        json={"mode": "force"},
     )
 
     assert response.status_code == 200
@@ -345,7 +371,7 @@ async def test_warmup_uses_unique_request_ids_per_account(async_client, monkeypa
             "Authorization": f"Bearer {key}",
             "x-request-id": "outer-warmup-request",
         },
-        json={"mode": "force-update"},
+        json={"mode": "force"},
     )
 
     assert response.status_code == 200

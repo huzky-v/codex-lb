@@ -3,6 +3,8 @@
 ### Requirement: Warmup endpoint is exposed on the v1 proxy surface
 The system SHALL expose `POST /v1/warmup` on the same authenticated proxy surface as other `/v1/*` routes. The endpoint SHALL accept a JSON body with `mode` and SHALL return a structured JSON summary of submitted, skipped, and failed account warmups.
 
+The system SHALL also expose `POST /v1/warmup/{mode}` on the same authenticated proxy surface. That route SHALL not require a request body and SHALL execute the same warmup behavior as the body-based route for the supplied `mode`.
+
 #### Scenario: Authenticated warmup request succeeds
 - **WHEN** a client calls `POST /v1/warmup` with a valid API key and valid mode
 - **THEN** the system returns 200 with a per-account warmup result summary
@@ -10,6 +12,10 @@ The system SHALL expose `POST /v1/warmup` on the same authenticated proxy surfac
 #### Scenario: Invalid mode is rejected
 - **WHEN** a client calls `POST /v1/warmup` with an unsupported mode value
 - **THEN** the system returns a 400 invalid request error
+
+#### Scenario: Path-based warmup request succeeds without a body
+- **WHEN** a client calls `POST /v1/warmup/normal` with a valid API key and no request body
+- **THEN** the system returns 200 with the same per-account warmup result summary as the body-based route
 
 ### Requirement: Warmup target pool is derived from API-key account scope
 The warmup target pool SHALL be derived from the authenticated API key. If `account_assignment_scope_enabled=true`, only assigned accounts SHALL be considered. If account scope is not enabled, all active accounts SHALL be considered.
@@ -24,25 +30,25 @@ The warmup target pool SHALL be derived from the authenticated API key. If `acco
 
 ### Requirement: Warmup mode semantics are deterministic
 The endpoint SHALL implement three warmup modes with deterministic behavior:
-- `default`: submit warmup only for accounts that have a primary (5h) usage row and 100% remaining primary usage.
-- `all-or-none`: if any target account fails the same eligibility check, reject the entire request and submit no warmups.
-- `force-update`: submit warmup for all target accounts regardless of usage.
+- `normal`: submit warmup only for accounts that have a primary (5h) usage row and 100% remaining primary usage.
+- `strict`: if any target account fails the same eligibility check, reject the entire request and submit no warmups.
+- `force`: submit warmup for all target accounts regardless of usage.
 
-An account SHALL be considered eligible for `default` and `all-or-none` only when:
+An account SHALL be considered eligible for `normal` and `strict` only when:
 - a primary usage row exists,
 - `window_minutes=300`, and
 - remaining usage is 100% (used percent is 0).
 
-#### Scenario: Default mode skips ineligible accounts
-- **WHEN** a `default` warmup request includes eligible and ineligible accounts
+#### Scenario: Normal mode skips ineligible accounts
+- **WHEN** a `normal` warmup request includes eligible and ineligible accounts
 - **THEN** only eligible accounts are submitted and ineligible accounts are returned as skipped
 
 #### Scenario: All-or-none rejects mixed eligibility pool
-- **WHEN** an `all-or-none` warmup request includes any ineligible account
+- **WHEN** a `strict` warmup request includes any ineligible account
 - **THEN** the system rejects the request and submits zero warmup upstream requests
 
-#### Scenario: Force-update bypasses usage eligibility
-- **WHEN** a `force-update` request is submitted
+#### Scenario: Force bypasses usage eligibility
+- **WHEN** a `force` request is submitted
 - **THEN** the system submits warmup requests for every target account regardless of usage state
 
 ### Requirement: Warmup sends minimal upstream responses request

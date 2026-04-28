@@ -179,7 +179,7 @@ _IMAGE_ERROR_CODE_STATUS: Final[dict[str, int]] = {
     "rate_limit_exceeded": 429,
     "insufficient_quota": 429,
 }
-_WARMUP_MODES: Final[frozenset[str]] = frozenset({"default", "all-or-none", "force-update"})
+_WARMUP_MODES: Final[frozenset[str]] = frozenset({"normal", "strict", "force"})
 
 
 @router.post(
@@ -390,21 +390,20 @@ async def v1_usage(
     )
 
 
-@v1_router.post("/warmup", response_model=WarmupResponse)
-async def v1_warmup(
+async def _run_v1_warmup(
     request: Request,
-    payload: WarmupRequest = Body(...),
     context: ProxyContext = Depends(get_proxy_context),
-    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+    api_key: ApiKeyData | None = None,
+    *,
+    mode: str,
 ) -> Response:
-    mode = payload.mode.strip().lower()
     if mode not in _WARMUP_MODES:
         return _logged_error_json_response(
             request,
             400,
             openai_error(
                 "invalid_request_error",
-                "Invalid warmup mode. Supported values: default, all-or-none, force-update.",
+                "Invalid warmup mode. Supported values: normal, strict, force.",
                 error_type="invalid_request_error",
             ),
         )
@@ -450,6 +449,36 @@ async def v1_warmup(
         ],
     )
     return JSONResponse(content=response.model_dump(mode="json"))
+
+
+@v1_router.post("/warmup", response_model=WarmupResponse)
+async def v1_warmup(
+    request: Request,
+    payload: WarmupRequest = Body(...),
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    return await _run_v1_warmup(
+        request,
+        context,
+        api_key,
+        mode=payload.mode.strip().lower(),
+    )
+
+
+@v1_router.post("/warmup/{mode}", response_model=WarmupResponse)
+async def v1_warmup_by_mode(
+    request: Request,
+    mode: str,
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    return await _run_v1_warmup(
+        request,
+        context,
+        api_key,
+        mode=mode.strip().lower(),
+    )
 
 
 def _ordered_aggregate_limits(aggregate_limits: dict[str, V1UsageLimitResponse]) -> list[V1UsageLimitResponse]:
