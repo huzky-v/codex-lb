@@ -56,6 +56,7 @@ from app.modules.proxy.ring_membership import (
     RingMembershipService,
 )
 from app.modules.request_logs import api as request_logs_api
+from app.modules.request_logs.rollup_scheduler import build_request_log_rollup_scheduler
 from app.modules.settings import api as settings_api
 from app.modules.sticky_sessions import api as sticky_sessions_api
 from app.modules.sticky_sessions.cleanup_scheduler import build_sticky_session_cleanup_scheduler
@@ -128,10 +129,12 @@ async def lifespan(app: FastAPI):
     api_key_limit_reset_scheduler = build_api_key_limit_reset_scheduler()
     model_scheduler = build_model_refresh_scheduler()
     sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
+    request_log_rollup_scheduler = build_request_log_rollup_scheduler()
     await usage_scheduler.start()
     await api_key_limit_reset_scheduler.start()
     await model_scheduler.start()
     await sticky_session_cleanup_scheduler.start()
+    await request_log_rollup_scheduler.start()
     if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
         import uvicorn
 
@@ -287,6 +290,7 @@ async def lifespan(app: FastAPI):
 
         await cache_poller.stop()
         await sticky_session_cleanup_scheduler.stop()
+        await request_log_rollup_scheduler.stop()
         await model_scheduler.stop()
         await api_key_limit_reset_scheduler.stop()
         await usage_scheduler.stop()

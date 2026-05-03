@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from app.core import usage as usage_core
 from app.core.crypto import TokenEncryptor
-from app.core.usage.types import UsageWindowRow
+from app.core.usage.types import RequestActivityAggregate, UsageCostByModel, UsageWindowRow
 from app.core.utils.time import utcnow
 from app.db.models import UsageHistory
 from app.modules.accounts.mappers import build_account_summaries
@@ -30,6 +30,47 @@ from app.modules.usage.depletion_service import (
     compute_aggregate_depletion,
     compute_depletion_for_account,
 )
+
+
+def _floor_hour(dt: datetime) -> datetime:
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
+def _ceil_hour(dt: datetime) -> datetime:
+    floored = _floor_hour(dt)
+    return floored if floored == dt else floored + timedelta(hours=1)
+
+
+def _add_activity(
+    a: object, b: object
+) -> object:
+    if not isinstance(a, RequestActivityAggregate) or not isinstance(b, RequestActivityAggregate):
+        return b or a
+    if a.request_count == 0:
+        return b
+    if b.request_count == 0:
+        return a
+    return RequestActivityAggregate(
+        request_count=a.request_count + b.request_count,
+        error_count=a.error_count + b.error_count,
+        input_tokens=a.input_tokens + b.input_tokens,
+        output_tokens=a.output_tokens + b.output_tokens,
+        cached_input_tokens=a.cached_input_tokens + b.cached_input_tokens,
+        cost_usd=a.cost_usd + b.cost_usd,
+    )
+
+
+def _merge_cost_by_model(
+    a: list[object], b: list[object]
+) -> list[object]:
+    merged: dict[str, float] = {}
+    for item in a:
+        if isinstance(item, UsageCostByModel):
+            merged[item.model] = merged.get(item.model, 0.0) + item.usd
+    for item in b:
+        if isinstance(item, UsageCostByModel):
+            merged[item.model] = merged.get(item.model, 0.0) + item.usd
+    return [UsageCostByModel(model=m, usd=round(c, 6)) for m, c in sorted(merged.items())]
 
 
 class DashboardService:
@@ -67,17 +108,60 @@ class DashboardService:
             bucket_since,
             overview_timeframe.bucket_seconds,
         )
-        bucket_rows = await self._repo.aggregate_logs_by_bucket(
-            bucket_query_since,
-            overview_timeframe.bucket_seconds,
-        )
+
+        current_hour_start = _floor_hour(now)
+        watermark = await self._repo.get_rollup_watermark()
+        has_rollups = watermark is not None and watermark > bucket_since
+
+        if has_rollups and watermark is not None:
+            next_hour_after_since = _ceil_hour(bucket_since)
+            rollup_start = max(next_hour_after_since, watermark)
+            if rollup_start > current_hour_start:
+                rollup_start = current_hour_start
+
+            raw_head_rows = await self._repo.aggregate_logs_by_bucket(
+                bucket_query_since,
+                overview_timeframe.bucket_seconds,
+                until=next_hour_after_since if next_hour_after_since <= now else None,
+            )
+            rollup_rows = await self._repo.aggregate_hourly_rollups_by_bucket(
+                next_hour_after_since,
+                rollup_start,
+                overview_timeframe.bucket_seconds,
+            )
+            raw_tail_rows = await self._repo.aggregate_logs_by_bucket(
+                current_hour_start,
+                overview_timeframe.bucket_seconds,
+            )
+            bucket_rows = raw_head_rows + rollup_rows + raw_tail_rows
+
+            raw_head_activity = await self._repo.aggregate_activity_since(
+                bucket_since,
+                until=next_hour_after_since if next_hour_after_since <= now else None,
+            )
+            rollup_activity = await self._repo.aggregate_rollup_activity(
+                next_hour_after_since,
+                rollup_start,
+            )
+            raw_tail_activity = await self._repo.aggregate_activity_since(
+                max(bucket_since, current_hour_start),
+            )
+            activity_aggregate = _add_activity(
+                _add_activity(raw_head_activity, rollup_activity),
+                raw_tail_activity,
+            )
+        else:
+            bucket_rows = await self._repo.aggregate_logs_by_bucket(
+                bucket_query_since,
+                overview_timeframe.bucket_seconds,
+            )
+            activity_aggregate = await self._repo.aggregate_activity_since(bucket_since)
         trends, _, _ = build_trends_from_buckets(
             bucket_rows,
             bucket_since,
             bucket_seconds=overview_timeframe.bucket_seconds,
             bucket_count=overview_timeframe.bucket_count,
         )
-        activity_aggregate = await self._repo.aggregate_activity_since(bucket_since)
         top_error = await self._repo.top_error_since(bucket_since)
         activity_metrics, activity_cost = build_activity_summaries(
             activity_aggregate,

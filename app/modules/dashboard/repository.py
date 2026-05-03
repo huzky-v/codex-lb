@@ -5,7 +5,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate
+from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel
 from app.db.models import Account, AdditionalUsageHistory, RequestLog, UsageHistory
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.request_logs.repository import RequestLogsRepository
@@ -51,14 +51,41 @@ class DashboardRepository:
         self,
         since: datetime,
         bucket_seconds: int = 21600,
+        until: datetime | None = None,
     ) -> list[BucketModelAggregate]:
-        return await self._logs_repo.aggregate_by_bucket(since, bucket_seconds)
+        return await self._logs_repo.aggregate_by_bucket(since, bucket_seconds, until=until)
 
-    async def aggregate_activity_since(self, since: datetime) -> RequestActivityAggregate:
-        return await self._logs_repo.aggregate_activity_since(since)
+    async def aggregate_activity_since(
+        self, since: datetime, until: datetime | None = None
+    ) -> RequestActivityAggregate:
+        return await self._logs_repo.aggregate_activity_since(since, until=until)
 
-    async def top_error_since(self, since: datetime) -> str | None:
-        return await self._logs_repo.top_error_since(since)
+    async def top_error_since(self, since: datetime, until: datetime | None = None) -> str | None:
+        return await self._logs_repo.top_error_since(since, until=until)
+
+    async def aggregate_cost_by_model(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+    ) -> list[UsageCostByModel]:
+        return await self._logs_repo.aggregate_cost_by_model(since, until=until)
+
+    async def get_rollup_watermark(self) -> datetime | None:
+        return await self._logs_repo.get_rollup_watermark()
+
+    async def aggregate_hourly_rollups_by_bucket(
+        self,
+        since: datetime,
+        until: datetime,
+        bucket_seconds: int,
+    ) -> list[BucketModelAggregate]:
+        return await self._logs_repo.aggregate_hourly_rollups_by_bucket(since, until, bucket_seconds)
+
+    async def aggregate_rollup_activity(self, since: datetime, until: datetime) -> RequestActivityAggregate:
+        return await self._logs_repo.aggregate_rollup_activity(since, until)
+
+    async def aggregate_rollup_cost_by_model(self, since: datetime, until: datetime) -> list[UsageCostByModel]:
+        return await self._logs_repo.aggregate_rollup_cost_by_model(since, until)
 
     async def list_additional_quota_keys(
         self,

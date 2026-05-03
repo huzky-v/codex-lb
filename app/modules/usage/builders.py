@@ -302,6 +302,38 @@ def _cost_summary_from_logs(logs: list[RequestLog]) -> UsageCostSummary:
     )
 
 
+def build_cost_summary_from_aggregates(
+    cost_by_model: list[UsageCostByModel],
+) -> UsageCostSummary:
+    total = sum(item.usd for item in cost_by_model)
+    return UsageCostSummary(
+        currency="USD",
+        total_usd_7d=round(total, 6),
+        by_model=[
+            UsageCostByModel(model=item.model, usd=round(item.usd, 6))
+            for item in sorted(cost_by_model, key=lambda i: i.model)
+        ],
+    )
+
+
+def build_metrics_from_aggregate(
+    aggregate: RequestActivityAggregate,
+    top_error: str | None = None,
+) -> UsageMetricsSummary:
+    total_requests = aggregate.request_count
+    error_rate: float | None = None
+    if total_requests > 0:
+        error_rate = aggregate.error_count / total_requests
+    tokens_secondary = aggregate.input_tokens + aggregate.output_tokens
+    return UsageMetricsSummary(
+        requests_7d=total_requests,
+        tokens_secondary_window=tokens_secondary,
+        cached_tokens_secondary_window=aggregate.cached_input_tokens,
+        error_rate_7d=error_rate,
+        top_error=top_error,
+    )
+
+
 def _usage_metrics(logs_secondary: list[RequestLog]) -> UsageMetricsSummary:
     total_requests = len(logs_secondary)
     error_logs = [log for log in logs_secondary if log.status != "success"]

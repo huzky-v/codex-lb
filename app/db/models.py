@@ -152,6 +152,30 @@ class RequestLog(Base):
     )
 
 
+class RequestLogHourlyRollup(Base):
+    __tablename__ = "request_log_hourly_rollups"
+
+    bucket_hour: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    model: Mapped[str] = mapped_column(String, primary_key=True)
+    service_tier_key: Mapped[str] = mapped_column(String, primary_key=True)
+    service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.0"))
+
+
+class RequestLogRollupState(Base):
+    __tablename__ = "request_log_rollup_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    rolled_through_hour: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
@@ -655,6 +679,7 @@ Index(
     RequestLog.requested_at.desc(),
     RequestLog.id.desc(),
 )
+Index("idx_hourly_rollup_bucket_hour", RequestLogHourlyRollup.bucket_hour)
 Index("idx_sticky_account", StickySession.account_id)
 Index("idx_sticky_kind_updated_at", StickySession.kind, StickySession.updated_at.desc())
 Index("idx_api_keys_hash", ApiKey.key_hash)

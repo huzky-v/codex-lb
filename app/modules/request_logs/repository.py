@@ -5,16 +5,16 @@ from datetime import datetime
 from typing import cast as typing_cast
 
 import anyio
-from sqlalchemy import Integer, String, and_, cast, func, literal_column, or_, select
+from sqlalchemy import Integer, String, and_, cast, delete, func, literal_column, or_, select
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate
+from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
-from app.db.models import Account, ApiKey, RequestLog
+from app.db.models import Account, ApiKey, RequestLog, RequestLogHourlyRollup, RequestLogRollupState
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,13 +76,13 @@ class RequestLogsRepository:
         self,
         since: datetime,
         bucket_seconds: int = 21600,
+        until: datetime | None = None,
     ) -> list[BucketModelAggregate]:
         bind = self._session.get_bind()
         dialect = bind.dialect.name if bind else "sqlite"
         if dialect == "postgresql":
             bucket_expr = func.floor(func.extract("epoch", RequestLog.requested_at) / bucket_seconds) * bucket_seconds
         else:
-            # Use explicit integer division for SQLite: CAST(epoch / N AS INTEGER) * N
             epoch_col = cast(func.strftime("%s", RequestLog.requested_at), Integer)
             bucket_expr = cast(epoch_col / bucket_seconds, Integer) * bucket_seconds
         bucket_col = bucket_expr.label("bucket_epoch")
@@ -104,6 +104,8 @@ class RequestLogsRepository:
             .group_by(bucket_col, RequestLog.model, RequestLog.service_tier)
             .order_by(bucket_col)
         )
+        if until is not None:
+            stmt = stmt.where(RequestLog.requested_at < until)
         result = await self._session.execute(stmt)
         return [
             BucketModelAggregate(
@@ -121,7 +123,9 @@ class RequestLogsRepository:
             for row in result.all()
         ]
 
-    async def aggregate_activity_since(self, since: datetime) -> RequestActivityAggregate:
+    async def aggregate_activity_since(
+        self, since: datetime, until: datetime | None = None
+    ) -> RequestActivityAggregate:
         stmt = select(
             func.count().label("request_count"),
             func.coalesce(
@@ -133,6 +137,8 @@ class RequestLogsRepository:
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
             func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
         ).where(RequestLog.requested_at >= since)
+        if until is not None:
+            stmt = stmt.where(RequestLog.requested_at < until)
         result = await self._session.execute(stmt)
         row = result.one()
         return RequestActivityAggregate(
@@ -144,7 +150,7 @@ class RequestLogsRepository:
             cost_usd=float(row.cost_usd or 0.0),
         )
 
-    async def top_error_since(self, since: datetime) -> str | None:
+    async def top_error_since(self, since: datetime, until: datetime | None = None) -> str | None:
         stmt = (
             select(RequestLog.error_code, func.count(RequestLog.id).label("error_count"))
             .where(
@@ -156,9 +162,191 @@ class RequestLogsRepository:
             .order_by(func.count(RequestLog.id).desc(), RequestLog.error_code.asc())
             .limit(1)
         )
+        if until is not None:
+            stmt = stmt.where(RequestLog.requested_at < until)
         result = await self._session.execute(stmt)
         row = result.first()
         return str(row[0]) if row and row[0] else None
+
+    async def aggregate_cost_by_model(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+    ) -> list[UsageCostByModel]:
+        stmt = (
+            select(
+                RequestLog.model,
+                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+            )
+            .where(RequestLog.requested_at >= since)
+            .group_by(RequestLog.model)
+        )
+        if until is not None:
+            stmt = stmt.where(RequestLog.requested_at < until)
+        result = await self._session.execute(stmt)
+        return [
+            UsageCostByModel(model=row.model, usd=float(row.cost_usd or 0.0))
+            for row in result.all()
+        ]
+
+    async def get_rollup_watermark(self) -> datetime | None:
+        stmt = select(RequestLogRollupState.rolled_through_hour).where(
+            RequestLogRollupState.id == 1,
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def aggregate_hourly_rollups_by_bucket(
+        self,
+        since: datetime,
+        until: datetime,
+        bucket_seconds: int,
+    ) -> list[BucketModelAggregate]:
+        bind = self._session.get_bind()
+        dialect = bind.dialect.name if bind else "sqlite"
+        Rollup = RequestLogHourlyRollup
+        if dialect == "postgresql":
+            bucket_expr = func.floor(func.extract("epoch", Rollup.bucket_hour) / bucket_seconds) * bucket_seconds
+        else:
+            epoch_col = cast(func.strftime("%s", Rollup.bucket_hour), Integer)
+            bucket_expr = cast(epoch_col / bucket_seconds, Integer) * bucket_seconds
+        bucket_col = bucket_expr.label("bucket_epoch")
+
+        stmt = (
+            select(
+                bucket_col,
+                Rollup.model,
+                Rollup.service_tier,
+                func.sum(Rollup.request_count).label("request_count"),
+                func.sum(Rollup.error_count).label("error_count"),
+                func.sum(Rollup.input_tokens).label("input_tokens"),
+                func.sum(Rollup.output_tokens).label("output_tokens"),
+                func.sum(Rollup.cached_input_tokens).label("cached_input_tokens"),
+                func.sum(Rollup.reasoning_tokens).label("reasoning_tokens"),
+                func.sum(Rollup.cost_usd).label("cost_usd"),
+            )
+            .where(Rollup.bucket_hour >= since, Rollup.bucket_hour < until)
+            .group_by(bucket_col, Rollup.model, Rollup.service_tier)
+            .order_by(bucket_col)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            BucketModelAggregate(
+                bucket_epoch=int(row.bucket_epoch),
+                model=row.model,
+                service_tier=row.service_tier,
+                request_count=int(row.request_count),
+                error_count=int(row.error_count),
+                input_tokens=int(row.input_tokens),
+                output_tokens=int(row.output_tokens),
+                cached_input_tokens=int(row.cached_input_tokens),
+                reasoning_tokens=int(row.reasoning_tokens),
+                cost_usd=float(row.cost_usd or 0.0),
+            )
+            for row in result.all()
+        ]
+
+    async def aggregate_rollup_activity(
+        self,
+        since: datetime,
+        until: datetime,
+    ) -> RequestActivityAggregate:
+        Rollup = RequestLogHourlyRollup
+        stmt = select(
+            func.coalesce(func.sum(Rollup.request_count), 0).label("request_count"),
+            func.coalesce(func.sum(Rollup.error_count), 0).label("error_count"),
+            func.coalesce(func.sum(Rollup.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(Rollup.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(Rollup.cached_input_tokens), 0).label("cached_input_tokens"),
+            func.coalesce(func.sum(Rollup.cost_usd), 0.0).label("cost_usd"),
+        ).where(Rollup.bucket_hour >= since, Rollup.bucket_hour < until)
+        result = await self._session.execute(stmt)
+        row = result.one()
+        return RequestActivityAggregate(
+            request_count=int(row.request_count),
+            error_count=int(row.error_count),
+            input_tokens=int(row.input_tokens),
+            output_tokens=int(row.output_tokens),
+            cached_input_tokens=int(row.cached_input_tokens),
+            cost_usd=float(row.cost_usd or 0.0),
+        )
+
+    async def aggregate_rollup_cost_by_model(
+        self,
+        since: datetime,
+        until: datetime,
+    ) -> list[UsageCostByModel]:
+        Rollup = RequestLogHourlyRollup
+        stmt = (
+            select(
+                Rollup.model,
+                func.coalesce(func.sum(Rollup.cost_usd), 0.0).label("cost_usd"),
+            )
+            .where(Rollup.bucket_hour >= since, Rollup.bucket_hour < until)
+            .group_by(Rollup.model)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            UsageCostByModel(model=row.model, usd=float(row.cost_usd or 0.0))
+            for row in result.all()
+        ]
+
+    async def replace_hour_rollup(self, bucket_hour: datetime) -> None:
+        from datetime import timedelta as _td
+
+        Rollup = RequestLogHourlyRollup
+        hour_end = bucket_hour.replace(minute=0, second=0, microsecond=0) + _td(hours=1)
+        await self._session.execute(
+            delete(Rollup).where(Rollup.bucket_hour == bucket_hour)
+        )
+        rl = RequestLog
+        stmt = (
+            select(
+                rl.model,
+                func.coalesce(rl.service_tier, "").label("service_tier_key"),
+                rl.service_tier,
+                func.count().label("request_count"),
+                func.coalesce(
+                    func.sum(cast(rl.status != literal_column("'success'"), Integer)), 0
+                ).label("error_count"),
+                func.coalesce(func.sum(rl.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(rl.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(rl.cached_input_tokens), 0).label("cached_input_tokens"),
+                func.coalesce(func.sum(rl.reasoning_tokens), 0).label("reasoning_tokens"),
+                func.coalesce(func.sum(rl.cost_usd), 0.0).label("cost_usd"),
+            )
+            .where(rl.requested_at >= bucket_hour, rl.requested_at < hour_end)
+            .group_by(rl.model, func.coalesce(rl.service_tier, ""), rl.service_tier)
+        )
+        result = await self._session.execute(stmt)
+        for row in result.all():
+            self._session.add(
+                RequestLogHourlyRollup(
+                    bucket_hour=bucket_hour,
+                    model=row.model,
+                    service_tier_key=row.service_tier_key,
+                    service_tier=row.service_tier,
+                    request_count=int(row.request_count),
+                    error_count=int(row.error_count),
+                    input_tokens=int(row.input_tokens),
+                    output_tokens=int(row.output_tokens),
+                    cached_input_tokens=int(row.cached_input_tokens),
+                    reasoning_tokens=int(row.reasoning_tokens),
+                    cost_usd=float(row.cost_usd or 0.0),
+                )
+            )
+
+    async def advance_rollup_watermark(self, rolled_through_hour: datetime) -> None:
+        state = await self._session.get(RequestLogRollupState, 1)
+        if state is None:
+            state = RequestLogRollupState(
+                id=1,
+                rolled_through_hour=rolled_through_hour,
+            )
+            self._session.add(state)
+        else:
+            state.rolled_through_hour = rolled_through_hour
+        await self._session.flush()
 
     async def add_log(
         self,
