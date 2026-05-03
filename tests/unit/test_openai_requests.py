@@ -73,6 +73,7 @@ def test_known_unsupported_upstream_fields_are_stripped():
         "prompt_cache_retention": "4h",
         "safety_identifier": "safe_123",
         "temperature": 0.2,
+        "top_p": 0.9,
         "custom_field": "kept",
     }
     request = ResponsesRequest.model_validate(payload)
@@ -82,6 +83,7 @@ def test_known_unsupported_upstream_fields_are_stripped():
     assert "prompt_cache_retention" not in dumped
     assert "safety_identifier" not in dumped
     assert "temperature" not in dumped
+    assert "top_p" not in dumped
     assert dumped["custom_field"] == "kept"
 
 
@@ -120,6 +122,7 @@ def test_compact_known_unsupported_upstream_fields_are_stripped():
         "prompt_cache_retention": "4h",
         "safety_identifier": "safe_123",
         "temperature": 0.2,
+        "top_p": 0.9,
     }
     request = ResponsesCompactRequest.model_validate(payload)
 
@@ -127,6 +130,7 @@ def test_compact_known_unsupported_upstream_fields_are_stripped():
     assert "prompt_cache_retention" not in dumped
     assert "safety_identifier" not in dumped
     assert "temperature" not in dumped
+    assert "top_p" not in dumped
 
 
 def test_compact_normalizes_fast_service_tier_to_priority_for_upstream():

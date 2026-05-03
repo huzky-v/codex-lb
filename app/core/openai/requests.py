@@ -456,6 +456,7 @@ _UNSUPPORTED_UPSTREAM_FIELDS = {
     "prompt_cache_retention",
     "safety_identifier",
     "temperature",
+    "top_p",
 }
 
 
