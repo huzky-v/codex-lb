@@ -171,6 +171,17 @@ describe("ApiDetail", () => {
 		expect(toggle).toBeChecked();
 	});
 
+	it("top-aligns the trend controls with the usage trend heading", () => {
+		renderApiDetail({
+			trends: createApiKeyTrends({
+				cost: [{ t: "2026-01-01T00:00:00Z", v: 0.2 }],
+				tokens: [{ t: "2026-01-01T00:00:00Z", v: 1500 }],
+			}),
+		});
+
+		expect(screen.getByTestId("api-trend-header")).toHaveClass("sm:items-start");
+	});
+
 	it("shows enable action for inactive keys and disable action for active keys", () => {
 		const { rerender } = renderWithProviders(
 			<ApiDetail

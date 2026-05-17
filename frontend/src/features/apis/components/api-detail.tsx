@@ -148,15 +148,18 @@ export function ApiDetail({
 				<ApiAccountCostDonut usage={accountUsage7Day ?? null} />
 
 				<div className="space-y-4 rounded-xl border bg-card p-5">
-					<div>
-						<h3 className="text-sm font-semibold">Usage Trend</h3>
-						<p className="mt-0.5 text-xs text-muted-foreground">
-							Last 7 days of tokens and cost.
-						</p>
-					</div>
+					<div
+						data-testid="api-trend-header"
+						className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+					>
+						<div>
+							<h3 className="text-sm font-semibold">Usage Trend</h3>
+							<p className="mt-0.5 text-xs text-muted-foreground">
+								Last 7 days of tokens and cost.
+							</p>
+						</div>
 
-					<div className="flex items-end justify-end">
-						<div className="space-y-2">
+						<div className="space-y-2 self-start sm:text-right">
 							<div className="flex items-center justify-end gap-1.5 rounded-md border px-2 py-1">
 								<span className="text-[10px]">Accumulated</span>
 								<Switch
