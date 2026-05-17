@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import {
+  getApiKeyAccountUsage7Day,
   createApiKey,
   deleteApiKey,
   getApiKeyTrends,
@@ -18,6 +19,8 @@ import type {
 function invalidateApiKeys(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ["api-keys", "list"] });
   void queryClient.invalidateQueries({ queryKey: ["api-keys", "trends"] });
+  void queryClient.invalidateQueries({ queryKey: ["api-keys", "usage-7d"] });
+  void queryClient.invalidateQueries({ queryKey: ["api-keys", "account-usage-7d"] });
 }
 
 export function useApiKeys() {
@@ -100,6 +103,17 @@ export function useApiKeyUsage7Day(keyId: string | null) {
   return useQuery({
     queryKey: ["api-keys", "usage-7d", keyId],
     queryFn: () => getApiKeyUsage7Day(keyId!),
+    enabled: !!keyId,
+    staleTime: 2 * 60_000,
+    refetchInterval: 2 * 60_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useApiKeyAccountUsage7Day(keyId: string | null) {
+  return useQuery({
+    queryKey: ["api-keys", "account-usage-7d", keyId],
+    queryFn: () => getApiKeyAccountUsage7Day(keyId!),
     enabled: !!keyId,
     staleTime: 2 * 60_000,
     refetchInterval: 2 * 60_000,

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
 	createApiKey,
+	createApiKeyAccountUsage7Day,
 	createApiKeyCreateResponse,
 	createApiKeyTrends,
 	createApiKeyUsage7Day,
@@ -18,6 +19,7 @@ const apiMocks = vi.hoisted(() => ({
 	regenerateApiKey: vi.fn(),
 	getApiKeyTrends: vi.fn(),
 	getApiKeyUsage7Day: vi.fn(),
+	getApiKeyAccountUsage7Day: vi.fn(),
 }));
 
 const toastMocks = vi.hoisted(() => ({
@@ -88,6 +90,8 @@ describe("useApiKeys", () => {
 		expect(toastMocks.success).toHaveBeenCalledWith("API key regenerated");
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["api-keys", "list"] });
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["api-keys", "trends"] });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["api-keys", "usage-7d"] });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["api-keys", "account-usage-7d"] });
 	});
 
 	it("surfaces mutation failures through error toasts", async () => {
@@ -160,5 +164,29 @@ describe("detail queries", () => {
 
 		expect(result.current.data).toEqual(response);
 		expect(apiMocks.getApiKeyUsage7Day).toHaveBeenCalledWith("key_1");
+	});
+
+	it("fetches 7 day account usage only when a key is selected", async () => {
+		const queryClient = createTestQueryClient();
+		const response = createApiKeyAccountUsage7Day({ keyId: "key_1" });
+		apiMocks.getApiKeyAccountUsage7Day.mockResolvedValue(response);
+
+		const { useApiKeyAccountUsage7Day } = await import("@/features/apis/hooks/use-apis");
+		const { result, rerender } = renderHook(
+			({ keyId }) => useApiKeyAccountUsage7Day(keyId),
+			{
+				initialProps: { keyId: null as string | null },
+				wrapper: createWrapper(queryClient),
+			},
+		);
+
+		expect(result.current.fetchStatus).toBe("idle");
+		expect(apiMocks.getApiKeyAccountUsage7Day).not.toHaveBeenCalled();
+
+		rerender({ keyId: "key_1" });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(result.current.data).toEqual(response);
+		expect(apiMocks.getApiKeyAccountUsage7Day).toHaveBeenCalledWith("key_1");
 	});
 });

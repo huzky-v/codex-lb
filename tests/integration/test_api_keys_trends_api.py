@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import text
 
 from app.core.utils.time import utcnow
-from app.db.models import RequestLog
+from app.db.models import Account, RequestLog
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 
@@ -24,6 +25,24 @@ async def _insert_request_logs(*rows: RequestLog) -> None:
         await session.commit()
 
 
+async def _insert_accounts(*rows: Account) -> None:
+    async with SessionLocal() as session:
+        session.add_all(rows)
+        await session.commit()
+
+
+def _make_account(account_id: str, email: str) -> Account:
+    return Account(
+        id=account_id,
+        email=email,
+        plan_type="plus",
+        access_token_encrypted=b"access",
+        refresh_token_encrypted=b"refresh",
+        id_token_encrypted=b"id",
+        last_refresh=utcnow(),
+    )
+
+
 def _parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
@@ -37,7 +56,7 @@ def _hour_bucket(value: datetime) -> datetime:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("endpoint", ["trends", "usage-7d"])
+@pytest.mark.parametrize("endpoint", ["trends", "usage-7d", "account-usage-7d"])
 async def test_api_key_detail_endpoints_return_404_for_missing_key(async_client, endpoint: str):
     response = await async_client.get(f"/api/api-keys/missing-key/{endpoint}")
     assert response.status_code == 404
@@ -406,3 +425,132 @@ async def test_usage_7d_clamps_cached_input_tokens_to_total_input(async_client):
         "totalRequests": 2,
         "cachedInputTokens": 14,
     }
+
+
+@pytest.mark.asyncio
+async def test_account_usage_7d_groups_known_accounts_and_deleted_bucket(async_client):
+    key_id = await _create_api_key(async_client, name="account-usage-key")
+    now = utcnow()
+
+    await _insert_accounts(
+        _make_account("acc_primary", "alpha@example.com"),
+        _make_account("acc_secondary", "beta@example.com"),
+    )
+    await _insert_request_logs(
+        RequestLog(
+            api_key_id=key_id,
+            account_id="acc_secondary",
+            request_id="req-account-1",
+            requested_at=now - timedelta(hours=10),
+            model="gpt-5.1",
+            status="ok",
+            input_tokens=10,
+            output_tokens=5,
+            cached_input_tokens=0,
+            cost_usd=0.8,
+        ),
+        RequestLog(
+            api_key_id=key_id,
+            account_id="acc_primary",
+            request_id="req-account-2",
+            requested_at=now - timedelta(hours=8),
+            model="gpt-5.1",
+            status="ok",
+            input_tokens=12,
+            output_tokens=4,
+            cached_input_tokens=0,
+            cost_usd=1.4,
+        ),
+        RequestLog(
+            api_key_id=key_id,
+            account_id=None,
+            request_id="req-account-3",
+            requested_at=now - timedelta(hours=3),
+            deleted_at=now - timedelta(hours=1),
+            model="gpt-5.1",
+            status="ok",
+            input_tokens=4,
+            output_tokens=1,
+            cached_input_tokens=0,
+            cost_usd=0.27,
+        ),
+        RequestLog(
+            api_key_id=key_id,
+            account_id="acc_primary",
+            request_id="req-account-old",
+            requested_at=now - timedelta(days=8),
+            model="gpt-5.1",
+            status="ok",
+            input_tokens=100,
+            output_tokens=20,
+            cached_input_tokens=0,
+            cost_usd=9.0,
+        ),
+    )
+
+    response = await async_client.get(f"/api/api-keys/{key_id}/account-usage-7d")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["keyId"] == key_id
+    assert payload["totalCostUsd"] == pytest.approx(2.47)
+    assert payload["accounts"] == [
+        {
+            "accountId": "acc_primary",
+            "displayName": "alpha@example.com",
+            "isEmailDerived": True,
+            "requestCount": 1,
+            "totalCostUsd": 1.4,
+        },
+        {
+            "accountId": "acc_secondary",
+            "displayName": "beta@example.com",
+            "isEmailDerived": True,
+            "requestCount": 1,
+            "totalCostUsd": 0.8,
+        },
+        {
+            "accountId": None,
+            "displayName": "Deleted Account",
+            "isEmailDerived": False,
+            "requestCount": 1,
+            "totalCostUsd": 0.27,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_account_usage_7d_query_plan_uses_api_key_time_index(async_client):
+    key_id = await _create_api_key(async_client, name="account-usage-plan-key")
+    now = utcnow()
+
+    async with SessionLocal() as session:
+        bind = session.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else "sqlite"
+        if dialect_name != "sqlite":
+            pytest.skip("SQLite-only query plan test")
+
+        plan_rows = (
+            await session.execute(
+                text(
+                    """
+                    EXPLAIN QUERY PLAN
+                    SELECT rl.account_id, rl.deleted_at, a.email, count(rl.id), coalesce(sum(rl.cost_usd), 0.0)
+                    FROM request_logs AS rl
+                    LEFT JOIN accounts AS a ON a.id = rl.account_id
+                    WHERE rl.api_key_id = :key_id
+                      AND rl.requested_at >= :since
+                      AND rl.requested_at < :until
+                    GROUP BY rl.account_id, rl.deleted_at, a.email
+                    """
+                ),
+                {
+                    "key_id": key_id,
+                    "since": now - timedelta(days=7),
+                    "until": now,
+                },
+            )
+        ).fetchall()
+
+    details = " ".join(str(row[-1]) for row in plan_rows)
+    assert "idx_logs_api_key_time" in details

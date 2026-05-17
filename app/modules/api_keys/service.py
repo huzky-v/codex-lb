@@ -20,6 +20,7 @@ from app.db.models import Account, ApiKey, ApiKeyLimit, LimitType, LimitWindow
 from app.modules.api_keys.limit_windows import advance_limit_reset, next_limit_reset
 from app.modules.api_keys.repository import (
     _UNSET,
+    ApiKeyAccountUsageBucket,
     ApiKeyTrendBucket,
     ApiKeyUsageSummary,
     ApiKeyUsageTotals,
@@ -161,6 +162,12 @@ class ApiKeysRepositoryProtocol(Protocol):
         since: datetime,
         until: datetime,
     ) -> ApiKeyUsageTotals: ...
+    async def account_usage_7d(
+        self,
+        key_id: str,
+        since: datetime,
+        until: datetime,
+    ) -> list[ApiKeyAccountUsageBucket]: ...
 
 
 class ApiKeyNotFoundError(ValueError):
@@ -808,6 +815,19 @@ class ApiKeysService:
             cached_input_tokens=data.cached_input_tokens,
         )
 
+    async def get_key_account_usage_7d(self, key_id: str) -> ApiKeyAccountUsage7DayData | None:
+        row = await self._repository.get_by_id(key_id)
+        if row is None:
+            return None
+        now = utcnow()
+        since = now - timedelta(days=7)
+        buckets = await self._repository.account_usage_7d(key_id, since, now)
+        return ApiKeyAccountUsage7DayData(
+            key_id=key_id,
+            total_cost_usd=round(sum(bucket.total_cost_usd for bucket in buckets), 6),
+            accounts=_build_account_usage_breakdown(buckets),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ApiKeyTrendsPoint:
@@ -829,6 +849,22 @@ class ApiKeyUsage7DayData:
     total_cost_usd: float = 0.0
     total_requests: int = 0
     cached_input_tokens: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyAccountUsageEntryData:
+    account_id: str | None
+    display_name: str
+    is_email_derived: bool
+    request_count: int
+    total_cost_usd: float
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyAccountUsage7DayData:
+    key_id: str
+    total_cost_usd: float = 0.0
+    accounts: list[ApiKeyAccountUsageEntryData] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1298,3 +1334,36 @@ def _build_api_key_trends(
         tokens_points.append(ApiKeyTrendsPoint(t=dt, v=float(tokens_by_bucket.get(epoch, 0))))
 
     return ApiKeyTrendsData(key_id=key_id, cost=cost_points, tokens=tokens_points)
+
+
+def _build_account_usage_breakdown(
+    buckets: list[ApiKeyAccountUsageBucket],
+) -> list[ApiKeyAccountUsageEntryData]:
+    known_accounts = [
+        ApiKeyAccountUsageEntryData(
+            account_id=bucket.account_id,
+            display_name=bucket.display_name,
+            is_email_derived=bucket.is_email_derived,
+            request_count=bucket.request_count,
+            total_cost_usd=bucket.total_cost_usd,
+        )
+        for bucket in buckets
+        if bucket.bucket_kind == "known"
+    ]
+    known_accounts.sort(key=lambda bucket: bucket.total_cost_usd, reverse=True)
+
+    unknown_bucket = next((bucket for bucket in buckets if bucket.bucket_kind == "unknown"), None)
+    deleted_bucket = next((bucket for bucket in buckets if bucket.bucket_kind == "deleted"), None)
+
+    trailing_buckets = [bucket for bucket in (unknown_bucket, deleted_bucket) if bucket is not None]
+
+    return known_accounts + [
+        ApiKeyAccountUsageEntryData(
+            account_id=None,
+            display_name=bucket.display_name,
+            is_email_derived=False,
+            request_count=bucket.request_count,
+            total_cost_usd=bucket.total_cost_usd,
+        )
+        for bucket in trailing_buckets
+    ]

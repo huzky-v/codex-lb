@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Integer, cast, delete, func, select, update
+from sqlalchemy import Integer, case, cast, delete, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -70,6 +70,16 @@ class ApiKeyUsageTotals:
     total_requests: int
     total_tokens: int
     cached_input_tokens: int
+    total_cost_usd: float
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyAccountUsageBucket:
+    account_id: str | None
+    display_name: str
+    is_email_derived: bool
+    bucket_kind: str
+    request_count: int
     total_cost_usd: float
 
 
@@ -674,6 +684,62 @@ class ApiKeysRepository:
             cached_input_tokens=cached_sum,
             total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
         )
+
+    async def account_usage_7d(
+        self,
+        key_id: str,
+        since: datetime,
+        until: datetime,
+    ) -> list[ApiKeyAccountUsageBucket]:
+        bucket_kind = case(
+            (Account.id.is_not(None), literal("known")),
+            (RequestLog.deleted_at.is_not(None), literal("deleted")),
+            else_=literal("unknown"),
+        ).label("bucket_kind")
+        display_name = case(
+            (Account.id.is_not(None), Account.email),
+            (RequestLog.deleted_at.is_not(None), literal("Deleted Account")),
+            else_=literal("Unknown Account"),
+        ).label("display_name")
+        is_email_derived = case(
+            (Account.id.is_not(None), literal(True)),
+            else_=literal(False),
+        ).label("is_email_derived")
+        grouped_account_id = case(
+            (Account.id.is_not(None), RequestLog.account_id),
+            else_=literal(None),
+        ).label("grouped_account_id")
+
+        stmt = (
+            select(
+                grouped_account_id,
+                display_name,
+                is_email_derived,
+                bucket_kind,
+                func.count(RequestLog.id).label("request_count"),
+                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
+            )
+            .select_from(RequestLog)
+            .outerjoin(Account, Account.id == RequestLog.account_id)
+            .where(
+                RequestLog.api_key_id == key_id,
+                RequestLog.requested_at >= since,
+                RequestLog.requested_at < until,
+            )
+            .group_by(grouped_account_id, display_name, is_email_derived, bucket_kind)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            ApiKeyAccountUsageBucket(
+                account_id=row.grouped_account_id,
+                display_name=str(row.display_name),
+                is_email_derived=bool(row.is_email_derived),
+                bucket_kind=str(row.bucket_kind),
+                request_count=int(row.request_count or 0),
+                total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
+            )
+            for row in result.all()
+        ]
 
 
 def _compute_increment(limit: ApiKeyLimit, input_tokens: int, output_tokens: int, cost_microdollars: int) -> int:

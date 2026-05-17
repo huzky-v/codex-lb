@@ -1,0 +1,4 @@
+- [x] 1. Add the API-key detail account-cost API contract to OpenSpec.
+- [x] 2. Implement backend 7-day account cost aggregation, schema/service/API wiring, and the supporting `request_logs` index.
+- [x] 3. Implement the APIs-tab donut layout, legend, privacy, and trend-panel adjustments.
+- [x] 4. Add targeted backend/frontend/migration coverage and run validation.

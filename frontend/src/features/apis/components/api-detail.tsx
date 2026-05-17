@@ -17,9 +17,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import type { ApiKey } from "@/features/api-keys/schemas";
+import { ApiAccountCostDonut } from "@/features/apis/components/api-account-cost-donut";
 import { ApiKeyInfo } from "@/features/apis/components/api-key-info";
 import { ApiTrendChart } from "@/features/apis/components/api-trend-chart";
-import type { ApiKeyUsage7DayResponse } from "@/features/apis/schemas";
+import type {
+	ApiKeyAccountUsage7DayResponse,
+	ApiKeyUsage7DayResponse,
+} from "@/features/apis/schemas";
 
 export type ApiDetailProps = {
 	apiKey: ApiKey | null;
@@ -28,6 +32,7 @@ export type ApiDetailProps = {
 		tokens: { t: string; v: number }[];
 	} | null;
 	usage7Day?: ApiKeyUsage7DayResponse | null;
+	accountUsage7Day?: ApiKeyAccountUsage7DayResponse | null;
 	usage7DayLoading?: boolean;
 	usage7DayError?: string | null;
 	busy: boolean;
@@ -51,6 +56,7 @@ export function ApiDetail({
 	apiKey,
 	trends,
 	usage7Day,
+	accountUsage7Day,
 	usage7DayLoading = false,
 	usage7DayError = null,
 	busy,
@@ -138,31 +144,48 @@ export function ApiDetail({
 				</DropdownMenu>
 			</div>
 
-			<div className="space-y-4 rounded-lg border bg-muted/30 p-4">
-				<div className="flex items-center justify-end gap-3">
-					<div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-						<span className="flex items-center gap-1.5">
-							Tokens
-							<span className="inline-block h-2 w-2 rounded-full bg-chart-2" />
-						</span>
-						<span className="flex items-center gap-1.5">
-							Cost
-							<span className="inline-block h-2 w-2 rounded-full bg-chart-1" />
-						</span>
-					</div>
-					<div className="flex items-center gap-1.5 rounded-md border px-2 py-1">
-						<span className="text-[10px]">Accumulated</span>
-						<Switch
-							size="sm"
-							checked={showAccumulated}
-							onCheckedChange={setShowAccumulated}
-						/>
-					</div>
-				</div>
+			<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,3fr)]">
+				<ApiAccountCostDonut usage={accountUsage7Day ?? null} />
 
-				{hasTrends && chartData && (
-					<ApiTrendChart cost={chartData.cost} tokens={chartData.tokens} />
-				)}
+				<div className="space-y-4 rounded-xl border bg-card p-5">
+					<div>
+						<h3 className="text-sm font-semibold">Usage Trend</h3>
+						<p className="mt-0.5 text-xs text-muted-foreground">
+							Last 7 days of tokens and cost.
+						</p>
+					</div>
+
+					<div className="flex items-end justify-end">
+						<div className="space-y-2">
+							<div className="flex items-center justify-end gap-1.5 rounded-md border px-2 py-1">
+								<span className="text-[10px]">Accumulated</span>
+								<Switch
+									size="sm"
+									checked={showAccumulated}
+									onCheckedChange={setShowAccumulated}
+								/>
+							</div>
+							<div className="flex items-center justify-end gap-3 text-[10px] text-muted-foreground">
+								<span className="flex items-center gap-1.5">
+									Tokens
+									<span className="inline-block h-2 w-2 rounded-full bg-chart-2" />
+								</span>
+								<span className="flex items-center gap-1.5">
+									Cost
+									<span className="inline-block h-2 w-2 rounded-full bg-chart-1" />
+								</span>
+							</div>
+						</div>
+					</div>
+
+					{hasTrends && chartData ? (
+						<ApiTrendChart cost={chartData.cost} tokens={chartData.tokens} />
+					) : (
+						<div className="flex h-[280px] items-center justify-center text-xs text-muted-foreground">
+							No trend data available
+						</div>
+					)}
+				</div>
 			</div>
 
 			{usage7DayError ? (

@@ -1,16 +1,22 @@
 import type { ComponentProps } from "react";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
 	createApiKey,
+	createApiKeyAccountUsage7Day,
 	createApiKeyTrends,
 	createApiKeyUsage7Day,
 } from "@/test/mocks/factories";
 import { renderWithProviders } from "@/test/utils";
+import { usePrivacyStore } from "@/hooks/use-privacy";
 
 import { ApiDetail } from "./api-detail";
+
+vi.mock("@/hooks/use-reduced-motion", () => ({
+	useReducedMotion: () => true,
+}));
 
 const callbacks = {
 	onEdit: vi.fn(),
@@ -19,6 +25,13 @@ const callbacks = {
 	onToggleActive: vi.fn(),
 };
 
+afterEach(() => {
+	act(() => {
+		usePrivacyStore.setState({ blurred: false });
+	});
+	vi.clearAllMocks();
+});
+
 function renderApiDetail(overrides: Partial<ComponentProps<typeof ApiDetail>> = {}) {
 	const apiKey = createApiKey({ name: "Analytics Key" });
 	return renderWithProviders(
@@ -26,6 +39,7 @@ function renderApiDetail(overrides: Partial<ComponentProps<typeof ApiDetail>> = 
 			apiKey={apiKey}
 			trends={null}
 			usage7Day={null}
+			accountUsage7Day={null}
 			usage7DayLoading={false}
 			usage7DayError={null}
 			busy={false}
@@ -42,6 +56,7 @@ describe("ApiDetail", () => {
 				apiKey={null}
 				trends={null}
 				usage7Day={null}
+				accountUsage7Day={null}
 				usage7DayLoading={false}
 				usage7DayError={null}
 				busy={false}
@@ -68,6 +83,10 @@ describe("ApiDetail", () => {
 		});
 
 		expect(screen.getByRole("heading", { name: "Analytics Key" })).toBeInTheDocument();
+		expect(screen.getByText("Account Cost")).toBeInTheDocument();
+		expect(screen.getByText("Last 7 days by routed account.")).toBeInTheDocument();
+		expect(screen.getByText("Usage Trend")).toBeInTheDocument();
+		expect(screen.getByText("Last 7 days of tokens and cost.")).toBeInTheDocument();
 		expect(screen.getByText("Tokens")).toBeInTheDocument();
 		expect(screen.getByText("Cost")).toBeInTheDocument();
 		expect(screen.getByRole("switch")).toBeInTheDocument();
@@ -158,6 +177,7 @@ describe("ApiDetail", () => {
 				apiKey={createApiKey({ isActive: true })}
 				trends={null}
 				usage7Day={null}
+				accountUsage7Day={null}
 				usage7DayLoading={false}
 				usage7DayError={null}
 				busy={false}
@@ -173,6 +193,7 @@ describe("ApiDetail", () => {
 				apiKey={createApiKey({ isActive: false })}
 				trends={null}
 				usage7Day={null}
+				accountUsage7Day={null}
 				usage7DayLoading={false}
 				usage7DayError={null}
 				busy={false}
@@ -229,5 +250,93 @@ describe("ApiDetail", () => {
 
 		await user.click(screen.getByRole("switch"));
 		expect(screen.getByRole("switch")).toBeChecked();
+	});
+
+	it("blurs email-derived account labels in the donut legend when privacy mode is enabled", () => {
+		act(() => {
+			usePrivacyStore.setState({ blurred: true });
+		});
+
+		renderApiDetail({
+			accountUsage7Day: createApiKeyAccountUsage7Day(),
+		});
+
+		expect(screen.getByText("alpha@example.com")).toHaveClass("privacy-blur");
+	});
+
+	it("limits the donut legend viewport to four rows", () => {
+		renderApiDetail({
+			accountUsage7Day: createApiKeyAccountUsage7Day({
+				accounts: [
+					{
+						accountId: "a1",
+						displayName: "one@example.com",
+						isEmailDerived: true,
+						requestCount: 1,
+						totalCostUsd: 4,
+					},
+					{
+						accountId: "a2",
+						displayName: "two@example.com",
+						isEmailDerived: true,
+						requestCount: 1,
+						totalCostUsd: 3,
+					},
+					{
+						accountId: "a3",
+						displayName: "three@example.com",
+						isEmailDerived: true,
+						requestCount: 1,
+						totalCostUsd: 2,
+					},
+					{
+						accountId: "a4",
+						displayName: "four@example.com",
+						isEmailDerived: true,
+						requestCount: 1,
+						totalCostUsd: 1,
+					},
+					{
+						accountId: "a5",
+						displayName: "Deleted Account",
+						isEmailDerived: false,
+						requestCount: 1,
+						totalCostUsd: 0.5,
+					},
+				],
+			}),
+		});
+
+		expect(screen.getByTestId("api-account-cost-legend-list")).toHaveStyle({
+			maxHeight: "calc(4 * 1.75rem + 3 * 0rem)",
+		});
+	});
+
+	it("keeps deleted and unknown account cost buckets distinct", () => {
+		renderApiDetail({
+			accountUsage7Day: createApiKeyAccountUsage7Day({
+				accounts: [
+					{
+						accountId: null,
+						displayName: "Unknown Account",
+						isEmailDerived: false,
+						requestCount: 2,
+						totalCostUsd: 1.1,
+					},
+					{
+						accountId: null,
+						displayName: "Deleted Account",
+						isEmailDerived: false,
+						requestCount: 3,
+						totalCostUsd: 0.8,
+					},
+				],
+			}),
+		});
+
+		expect(screen.getByText("Unknown Account")).toBeInTheDocument();
+		expect(screen.getByText("Deleted Account")).toBeInTheDocument();
+		expect(screen.getByTestId("api-account-cost-legend-0")).toBeInTheDocument();
+		expect(screen.getByTestId("api-account-cost-legend-1")).toBeInTheDocument();
 	});
 });

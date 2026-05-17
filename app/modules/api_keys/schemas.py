@@ -96,3 +96,17 @@ class ApiKeyUsage7DayResponse(DashboardModel):
     total_cost_usd: float = 0
     total_requests: int = 0
     cached_input_tokens: int = 0
+
+
+class ApiKeyAccountUsageEntryResponse(DashboardModel):
+    account_id: str | None
+    display_name: str
+    is_email_derived: bool = False
+    request_count: int = 0
+    total_cost_usd: float = 0
+
+
+class ApiKeyAccountUsage7DayResponse(DashboardModel):
+    key_id: str
+    total_cost_usd: float = 0
+    accounts: list[ApiKeyAccountUsageEntryResponse] = Field(default_factory=list)

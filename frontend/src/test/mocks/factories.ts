@@ -18,10 +18,12 @@ import {
 	ApiKeySchema,
 } from "@/features/api-keys/schemas";
 import type {
+	ApiKeyAccountUsage7DayResponse,
 	ApiKeyTrendsResponse,
 	ApiKeyUsage7DayResponse,
 } from "@/features/apis/schemas";
 import {
+	ApiKeyAccountUsage7DayResponseSchema,
 	ApiKeyTrendsResponseSchema,
 	ApiKeyUsage7DayResponseSchema,
 } from "@/features/apis/schemas";
@@ -60,6 +62,7 @@ export type {
 	OauthStatusResponse,
 	ApiKey,
 	ApiKeyCreateResponse,
+	ApiKeyAccountUsage7DayResponse,
 	ApiKeyTrendsResponse,
 	ApiKeyUsage7DayResponse,
 };
@@ -503,6 +506,39 @@ export function createApiKeyUsage7Day(
 		cachedInputTokens: 45_000,
 		totalRequests: 350,
 		totalCostUsd: 2.47,
+		...overrides,
+	});
+}
+
+export function createApiKeyAccountUsage7Day(
+	overrides: Partial<ApiKeyAccountUsage7DayResponse> = {},
+): ApiKeyAccountUsage7DayResponse {
+	return ApiKeyAccountUsage7DayResponseSchema.parse({
+		keyId: "key_1",
+		totalCostUsd: 2.47,
+		accounts: [
+			{
+				accountId: "acc_primary",
+				displayName: "alpha@example.com",
+				isEmailDerived: true,
+				requestCount: 14,
+				totalCostUsd: 1.4,
+			},
+			{
+				accountId: "acc_secondary",
+				displayName: "beta@example.com",
+				isEmailDerived: true,
+				requestCount: 9,
+				totalCostUsd: 0.8,
+			},
+			{
+				accountId: null,
+				displayName: "Deleted Account",
+				isEmailDerived: false,
+				requestCount: 3,
+				totalCostUsd: 0.27,
+			},
+		],
 		...overrides,
 	});
 }
