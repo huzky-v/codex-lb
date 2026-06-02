@@ -74,6 +74,7 @@ class ApiKeysRepositoryProtocol(Protocol):
         enforced_reasoning_effort: str | None | _Unset = ...,
         enforced_service_tier: str | None | _Unset = ...,
         traffic_class: str | _Unset = ...,
+        usage_sections: str | _Unset = ...,
         account_assignment_scope_enabled: bool | _Unset = ...,
         expires_at: datetime | None | _Unset = ...,
         is_active: bool | _Unset = ...,
@@ -257,6 +258,7 @@ class ApiKeyCreateData:
     enforced_reasoning_effort: str | None = None
     enforced_service_tier: str | None = None
     traffic_class: str = TRAFFIC_CLASS_FOREGROUND
+    usage_sections: str = "upstream_limits,account_pool_usage"
     expires_at: datetime | None = None
     assigned_account_ids: list[str] | None = None
     limits: list[LimitRuleInput] = field(default_factory=list)
@@ -278,6 +280,8 @@ class ApiKeyUpdateData:
     enforced_service_tier_set: bool = False
     traffic_class: str | None = None
     traffic_class_set: bool = False
+    usage_sections: str | None = None
+    usage_sections_set: bool = False
     expires_at: datetime | None = None
     expires_at_set: bool = False
     is_active: bool | None = None
@@ -304,6 +308,7 @@ class ApiKeyData:
     last_used_at: datetime | None
     apply_to_codex_model: bool = False
     traffic_class: str = TRAFFIC_CLASS_FOREGROUND
+    usage_sections: str = "upstream_limits,account_pool_usage"
     limits: list[LimitRuleData] = field(default_factory=list)
     usage_summary: "ApiKeyUsageSummaryData | None" = None
     account_assignment_scope_enabled: bool = False
@@ -419,6 +424,7 @@ class ApiKeysService:
         enforced_reasoning_effort = _normalize_reasoning_effort(payload.enforced_reasoning_effort)
         enforced_service_tier = _normalize_service_tier(payload.enforced_service_tier)
         traffic_class = _normalize_traffic_class(payload.traffic_class)
+        usage_sections = _normalize_usage_sections(payload.usage_sections)
         _validate_model_enforcement(enforced_model=enforced_model, allowed_models=normalized_allowed_models)
         row = ApiKey(
             id=str(__import__("uuid").uuid4()),
@@ -432,6 +438,7 @@ class ApiKeysService:
             enforced_service_tier=enforced_service_tier,
             account_assignment_scope_enabled=bool(assigned_account_ids),
             traffic_class=traffic_class,
+            usage_sections=usage_sections,
             expires_at=expires_at,
             is_active=True,
             created_at=now,
@@ -541,6 +548,9 @@ class ApiKeysService:
         traffic_class_update: str | _Unset = _UNSET
         if payload.traffic_class_set:
             traffic_class_update = _normalize_traffic_class(payload.traffic_class)
+        usage_sections: str | _Unset = _UNSET
+        if payload.usage_sections_set:
+            usage_sections = _normalize_usage_sections(payload.usage_sections)
 
         if payload.allowed_models_set or payload.enforced_model_set:
             effective_allowed_models = (
@@ -583,6 +593,7 @@ class ApiKeysService:
                 ),
                 enforced_service_tier=(enforced_service_tier if payload.enforced_service_tier_set else _UNSET),
                 traffic_class=traffic_class_update,
+                usage_sections=usage_sections,
                 account_assignment_scope_enabled=account_assignment_scope_enabled,
                 expires_at=expires_at if payload.expires_at_set else _UNSET,
                 is_active=(payload.is_active if payload.is_active_set and payload.is_active is not None else _UNSET),
@@ -613,6 +624,7 @@ class ApiKeysService:
             or payload.enforced_reasoning_effort_set
             or payload.enforced_service_tier_set
             or payload.traffic_class_set
+            or payload.usage_sections_set
             or payload.expires_at_set
             or payload.is_active_set
         ):
@@ -1139,6 +1151,29 @@ def _normalize_name(name: str) -> str:
     return normalized
 
 
+_VALID_USAGE_SECTIONS = {"upstream_limits", "account_pool_usage"}
+_DEFAULT_USAGE_SECTIONS = "upstream_limits,account_pool_usage"
+
+
+def _normalize_usage_sections(raw: str | None) -> str:
+    if raw is None:
+        return _DEFAULT_USAGE_SECTIONS
+    if not raw.strip():
+        return ""
+    sections = [s.strip() for s in raw.split(",") if s.strip()]
+    invalid = [s for s in sections if s not in _VALID_USAGE_SECTIONS]
+    if invalid:
+        raise ApiKeyValidationError(f"Invalid usage sections: {', '.join(invalid)}")
+    return ",".join(sections)
+
+
+def _get_usage_sections_with_default(row: ApiKey) -> str:
+    value = getattr(row, "usage_sections", None)
+    if value is None:
+        return _DEFAULT_USAGE_SECTIONS
+    return value
+
+
 def _generate_plain_key() -> str:
     return f"sk-clb-{secrets.token_urlsafe(32)}"
 
@@ -1469,6 +1504,7 @@ def _to_created_data(data: ApiKeyData, key: str) -> ApiKeyCreatedData:
         enforced_reasoning_effort=data.enforced_reasoning_effort,
         enforced_service_tier=data.enforced_service_tier,
         traffic_class=data.traffic_class,
+        usage_sections=data.usage_sections,
         expires_at=data.expires_at,
         is_active=data.is_active,
         created_at=data.created_at,
@@ -1499,6 +1535,7 @@ def _to_api_key_data(
         enforced_reasoning_effort=_normalize_reasoning_effort_lenient(row.enforced_reasoning_effort),
         enforced_service_tier=_normalize_service_tier_lenient(row.enforced_service_tier),
         traffic_class=_normalize_traffic_class_lenient(getattr(row, "traffic_class", TRAFFIC_CLASS_FOREGROUND)),
+        usage_sections=_get_usage_sections_with_default(row),
         expires_at=row.expires_at,
         is_active=row.is_active,
         created_at=row.created_at,

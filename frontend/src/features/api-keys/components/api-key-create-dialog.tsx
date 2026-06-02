@@ -27,6 +27,7 @@ import { ExpiryPicker } from "@/features/api-keys/components/expiry-picker";
 import { LimitRulesEditor } from "@/features/api-keys/components/limit-rules-editor";
 import { ModelMultiSelect } from "@/features/api-keys/components/model-multi-select";
 import type { ApiKeyCreateRequest, LimitRuleCreate, ServiceTierType, TrafficClass } from "@/features/api-keys/schemas";
+import { UsageSectionsMultiSelect } from "@/features/api-keys/components/usage-sections-multi-select";
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -55,6 +56,7 @@ function ApiKeyCreateForm({ busy, onClose, onSubmit }: ApiKeyCreateFormProps) {
 
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [usageSections, setUsageSections] = useState<string>("upstream_limits,account_pool_usage");
   const [limitRules, setLimitRules] = useState<LimitRuleCreate[]>([]);
   const [expiresAt, setExpiresAt] = useState<Date | null>(null);
   const [enforcedModel, setEnforcedModel] = useState("");
@@ -70,6 +72,7 @@ function ApiKeyCreateForm({ busy, onClose, onSubmit }: ApiKeyCreateFormProps) {
       allowedModels: selectedModels.length > 0 ? selectedModels : undefined,
       applyToCodexModel,
       ...(selectedAccountIds.length > 0 ? { assignedAccountIds: selectedAccountIds } : {}),
+      usageSections,
       enforcedModel: enforcedModel.trim() ? enforcedModel.trim() : null,
       enforcedReasoningEffort:
         enforcedReasoningEffort === "none"
@@ -130,6 +133,11 @@ function ApiKeyCreateForm({ busy, onClose, onSubmit }: ApiKeyCreateFormProps) {
             <div className="space-y-1">
               <label className="text-sm font-medium">Assigned accounts</label>
               <AccountMultiSelect value={selectedAccountIds} onChange={setSelectedAccountIds} />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Usage sections shown to client</label>
+              <UsageSectionsMultiSelect value={usageSections} onChange={setUsageSections} />
             </div>
 
             <div className="space-y-1">

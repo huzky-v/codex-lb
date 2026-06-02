@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.clients.files import OPENAI_FILE_UPLOAD_LIMIT_BYTES, OPENAI_FILE_USE_CASE
@@ -216,6 +218,13 @@ class V1UsageLimitResponse(BaseModel):
     source: str = "api_key_limit"
 
 
+class AccountPoolUsageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary: float | None = None
+    secondary: float | None = None
+
+
 class V1UsageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -225,6 +234,7 @@ class V1UsageResponse(BaseModel):
     total_cost_usd: float
     limits: list[V1UsageLimitResponse]
     upstream_limits: list[V1UsageLimitResponse] = []
+    account_pool_usage: Optional[AccountPoolUsageResponse] = None
 
 
 class WarmupRequest(BaseModel):

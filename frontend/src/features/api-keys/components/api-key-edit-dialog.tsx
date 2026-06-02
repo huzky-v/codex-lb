@@ -28,6 +28,7 @@ import { LimitRulesEditor } from "@/features/api-keys/components/limit-rules-edi
 import { AccountMultiSelect } from "@/features/api-keys/components/account-multi-select";
 import { ModelMultiSelect } from "@/features/api-keys/components/model-multi-select";
 import type { ApiKey, ApiKeyUpdateRequest, LimitRuleCreate, LimitType, ServiceTierType, TrafficClass } from "@/features/api-keys/schemas";
+import { UsageSectionsMultiSelect } from "@/features/api-keys/components/usage-sections-multi-select";
 import { parseDate } from "@/utils/formatters";
 
 import { hasLimitRuleChanges, normalizeLimitRules } from "./limit-rules-utils";
@@ -83,6 +84,7 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
 
   const [selectedModels, setSelectedModels] = useState<string[]>(apiKey.allowedModels || []);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>(apiKey.assignedAccountIds);
+  const [usageSections, setUsageSections] = useState<string>(apiKey.usageSections);
   const initialLimitRules = useMemo(() => limitsToCreateRules(apiKey), [apiKey]);
   const [limitRules, setLimitRules] = useState<LimitRuleCreate[]>(() => initialLimitRules);
   const [expiresAt, setExpiresAt] = useState<Date | null>(() => parseDate(apiKey.expiresAt));
@@ -109,6 +111,7 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
       enforcedReasoningEffort: enforcedReasoningEffort === "none" ? null : enforcedReasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh",
       enforcedServiceTier: enforcedServiceTier === "none" ? null : enforcedServiceTier as ServiceTierType,
       trafficClass,
+      usageSections,
       expiresAt: expiresAt?.toISOString() ?? null,
       isActive: values.isActive,
     };
@@ -167,6 +170,11 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
             <div className="space-y-1">
               <div className="text-sm font-medium">Assigned accounts</div>
               <AccountMultiSelect value={selectedAccountIds} onChange={setSelectedAccountIds} />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Usage sections shown to client</div>
+              <UsageSectionsMultiSelect value={usageSections} onChange={setUsageSections} />
             </div>
 
             <div className="space-y-1">
