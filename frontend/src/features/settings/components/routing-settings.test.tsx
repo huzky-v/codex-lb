@@ -49,6 +49,7 @@ const BASE_SETTINGS: DashboardSettings = {
   apiKeyAuthEnabled: true,
   additionalQuotaRoutingPolicies: {},
   additionalQuotaPolicies: [],
+  hideUpstreamQuotaFromApiKeys: false,
   ...LIMIT_WARMUP_DEFAULTS,
 };
 
@@ -82,6 +83,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
 
@@ -113,6 +115,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
   });
@@ -149,6 +152,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
   });
@@ -184,6 +188,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
 
@@ -301,6 +306,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
   });
@@ -365,6 +371,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
   });
@@ -445,6 +452,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
   });
@@ -551,6 +559,7 @@ describe("RoutingSettings", () => {
       importWithoutOverwrite: false,
       totpRequiredOnLogin: false,
       apiKeyAuthEnabled: true,
+      hideUpstreamQuotaFromApiKeys: false,
       ...LIMIT_WARMUP_DEFAULTS,
     });
   });

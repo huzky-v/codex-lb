@@ -36,6 +36,7 @@ const baseSettings = {
   totpRequiredOnLogin: false,
   totpConfigured: true,
   apiKeyAuthEnabled: true,
+  hideUpstreamQuotaFromApiKeys: false,
   ...LIMIT_WARMUP_DEFAULTS,
   ...ADDITIONAL_QUOTA_DEFAULTS,
 };

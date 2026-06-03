@@ -128,9 +128,13 @@ export function SettingsPage() {
 
             <ApiKeysSection
               apiKeyAuthEnabled={settings.apiKeyAuthEnabled}
+              hideUpstreamQuotaFromApiKeys={settings.hideUpstreamQuotaFromApiKeys}
               disabled={busy}
               onApiKeyAuthEnabledChange={(enabled) =>
                 void handleSave(buildSettingsUpdateRequest(settings, { apiKeyAuthEnabled: enabled }))
+              }
+              onHideUpstreamQuotaFromApiKeysChange={(enabled) =>
+                void handleSave(buildSettingsUpdateRequest({ hideUpstreamQuotaFromApiKeys: enabled }))
               }
             />
             <FirewallSection />

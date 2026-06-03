@@ -439,6 +439,7 @@ export function createDashboardSettings(
 		totpRequiredOnLogin: false,
 		totpConfigured: true,
 		apiKeyAuthEnabled: true,
+		hideUpstreamQuotaFromApiKeys: false,
 		limitWarmupEnabled: false,
 		limitWarmupWindows: "both",
 		limitWarmupModel: "auto",

@@ -135,13 +135,14 @@ const SettingsPayloadSchema = z
     totpRequiredOnLogin: z.boolean().optional(),
     totpConfigured: z.boolean().optional(),
     apiKeyAuthEnabled: z.boolean().optional(),
+    hideUpstreamQuotaFromApiKeys: z.boolean().optional(),
   })
   .passthrough();
 
 const QuotaPlannerSettingsPayloadSchema = z
-	.object({
-		mode: z.enum(["off", "shadow", "suggest", "auto"]).optional(),
-		timezone: z.string().optional(),
+		.object({
+			mode: z.enum(["off", "shadow", "suggest", "auto"]).optional(),
+			timezone: z.string().optional(),
 		workingDays: z.array(z.number().int().min(0).max(6)).optional(),
 		workingHoursStart: z.string().optional(),
 		workingHoursEnd: z.string().optional(),
@@ -151,11 +152,11 @@ const QuotaPlannerSettingsPayloadSchema = z
 		maxWarmupCreditsPerDay: z.number().min(0).optional(),
 		minExpectedGain: z.number().min(0).optional(),
 		forecastQuantile: z.enum(["p50", "p75", "p90"]).optional(),
-		allowSyntheticTraffic: z.boolean().optional(),
-		warmupModelPreference: z.string().nullable().optional(),
-		dryRun: z.boolean().optional(),
-	})
-	.passthrough();
+			allowSyntheticTraffic: z.boolean().optional(),
+			warmupModelPreference: z.string().nullable().optional(),
+			dryRun: z.boolean().optional(),
+		})
+		.passthrough();
 
 // ── Helpers ──
 
