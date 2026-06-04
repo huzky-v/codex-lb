@@ -142,6 +142,7 @@ describe("TotpSettings", () => {
     delete saveSettings.totpConfigured;
     delete saveSettings.upstreamProxyRoutingEnabled;
     delete saveSettings.upstreamProxyDefaultPoolId;
+    delete saveSettings.hideUpstreamQuotaFromApiKeys;
 
     renderWithClient(<TotpSettings settings={baseSettings} onSave={onSave} />);
 

@@ -134,7 +134,7 @@ export function SettingsPage() {
                 void handleSave(buildSettingsUpdateRequest(settings, { apiKeyAuthEnabled: enabled }))
               }
               onHideUpstreamQuotaFromApiKeysChange={(enabled) =>
-                void handleSave(buildSettingsUpdateRequest({ hideUpstreamQuotaFromApiKeys: enabled }))
+                void handleSave(buildSettingsUpdateRequest(settings, { hideUpstreamQuotaFromApiKeys: enabled }))
               }
             />
             <FirewallSection />
