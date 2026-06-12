@@ -71,9 +71,7 @@ class ReportsRepository:
     ) -> list[DailyReportAggregateRow]:
         window_days = (end_date - start_date).days + 1
         if window_days > MAX_DAILY_REPORT_DAYS:
-            raise DailyReportRangeTooLargeError(
-                f"report date range must be {MAX_DAILY_REPORT_DAYS} days or less"
-            )
+            raise DailyReportRangeTooLargeError(f"report date range must be {MAX_DAILY_REPORT_DAYS} days or less")
         day_ranges = list(_daily_bucket_ranges(start_date, end_date, timezone_info))
         if not day_ranges:
             return []
