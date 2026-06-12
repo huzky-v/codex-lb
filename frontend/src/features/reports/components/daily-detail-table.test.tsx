@@ -44,4 +44,30 @@ describe("DailyDetailTable", () => {
       "overflow-y-auto",
     );
   });
+
+  it("renders existing rows when a date bound is cleared", () => {
+    render(
+      <DailyDetailTable
+        startDate=""
+        endDate="2026-06-12"
+        data={[
+          {
+            date: "2026-06-05",
+            requests: 150,
+            inputTokens: 5_400_000,
+            outputTokens: 59_000,
+            cachedInputTokens: 0,
+            costUsd: 3.77,
+            activeAccounts: 2,
+            errorCount: 0,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("daily-breakdown-row-2026-06-05")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("daily-breakdown-row-2026-06-06"),
+    ).not.toBeInTheDocument();
+  });
 });
