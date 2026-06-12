@@ -101,3 +101,50 @@ async def test_aggregate_daily_rows_groups_in_sql_and_returns_only_buckets_with_
     assert rows[1].cost_usd == 0.1
     assert rows[1].active_accounts == 0
     assert rows[1].error_count == 1
+
+
+@pytest.mark.asyncio
+async def test_aggregate_daily_rows_supports_ranges_longer_than_sqlite_compound_limit(
+    async_session: AsyncSession,
+) -> None:
+    repo = ReportsRepository(async_session)
+    timezone_info = timezone.utc
+    start_date = date(2024, 1, 1)
+    end_date = start_date + timedelta(days=500)
+
+    async_session.add(_make_account("acc_reports_long_range", "reports-long-range@example.com"))
+    async_session.add_all(
+        [
+            RequestLog(
+                account_id="acc_reports_long_range",
+                request_id="report-long-range-1",
+                requested_at=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc).replace(tzinfo=None),
+                model="gpt-5.1",
+                status="success",
+                input_tokens=10,
+                output_tokens=4,
+                cached_input_tokens=2,
+                cost_usd=0.25,
+            ),
+            RequestLog(
+                account_id="acc_reports_long_range",
+                request_id="report-long-range-2",
+                requested_at=datetime(2025, 5, 15, 12, 0, tzinfo=timezone.utc).replace(tzinfo=None),
+                model="gpt-5.1",
+                status="error",
+                input_tokens=5,
+                output_tokens=1,
+                cached_input_tokens=0,
+                cost_usd=0.1,
+            ),
+        ]
+    )
+    await async_session.commit()
+
+    rows = await repo.aggregate_daily_rows(start_date, end_date, timezone_info)
+
+    assert [row.date for row in rows] == ["2024-01-01", "2025-05-15"]
+    assert rows[0].requests == 1
+    assert rows[0].cost_usd == 0.25
+    assert rows[1].requests == 1
+    assert rows[1].cost_usd == 0.1
