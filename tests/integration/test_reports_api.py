@@ -112,6 +112,17 @@ async def test_reports_api_rejects_oversized_date_ranges(async_client, db_setup)
     assert response.json()["error"]["message"] == "report date range must be 730 days or less"
 
 
+async def test_reports_api_rejects_oversized_date_ranges_with_default_end_date(async_client, db_setup):
+    response = await async_client.get(
+        "/api/reports",
+        params={
+            "start_date": "2020-01-01",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "report date range must be 730 days or less"
+
+
 async def test_reports_api_includes_preserved_deleted_account_history(async_client, db_setup):
     start_at = _naive_utc(datetime(2026, 6, 1, 11, 0, 0, tzinfo=timezone.utc))
     deleted_at = _naive_utc(datetime(2026, 6, 2, 9, 0, 0, tzinfo=timezone.utc))

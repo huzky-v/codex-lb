@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.dependencies import ReportsContext, get_reports_context
-from app.modules.reports.repository import MAX_DAILY_REPORT_DAYS, DailyReportRangeTooLargeError
+from app.modules.reports.repository import DailyReportRangeTooLargeError
 from app.modules.reports.schemas import ReportsResponse
 
 router = APIRouter(
@@ -26,13 +26,6 @@ async def get_reports(
     account_id: Annotated[list[str] | None, Query()] = None,
     model: Annotated[str | None, Query()] = None,
 ) -> ReportsResponse:
-    if start_date is not None and end_date is not None:
-        window_days = (end_date - start_date).days + 1
-        if window_days > MAX_DAILY_REPORT_DAYS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"report date range must be {MAX_DAILY_REPORT_DAYS} days or less",
-            )
     try:
         return await context.service.get_reports(
             start_date=start_date,

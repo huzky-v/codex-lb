@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.utils.time import to_utc_naive, utcnow
-from app.modules.reports.repository import ReportsRepository
+from app.modules.reports.repository import MAX_DAILY_REPORT_DAYS, DailyReportRangeTooLargeError, ReportsRepository
 from app.modules.reports.schemas import (
     AccountCostEntry,
     DailyReportRow,
@@ -34,10 +34,13 @@ class ReportsService:
             end_date = now.date()
         if start_date is None:
             start_date = end_date - timedelta(days=6)
+        window_days = (end_date - start_date).days + 1
+        if window_days > MAX_DAILY_REPORT_DAYS:
+            raise DailyReportRangeTooLargeError(f"report date range must be {MAX_DAILY_REPORT_DAYS} days or less")
 
         start_at = _local_midnight_to_utc_naive(start_date, timezone_info)
         end_at = _local_midnight_to_utc_naive(end_date + timedelta(days=1), timezone_info)
-        window_days = max((end_date - start_date).days + 1, 1)
+        window_days = max(window_days, 1)
         previous_end_date = start_date - timedelta(days=1)
         previous_start_date = previous_end_date - timedelta(days=window_days - 1)
         previous_start_at = _local_midnight_to_utc_naive(previous_start_date, timezone_info)
