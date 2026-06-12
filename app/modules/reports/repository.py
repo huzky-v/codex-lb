@@ -220,9 +220,7 @@ class ReportsRepository:
         if model:
             conditions.append(RequestLog.model == model)
 
-        result = await self._session.execute(
-            select(func.min(RequestLog.requested_at)).where(and_(*conditions))
-        )
+        result = await self._session.execute(select(func.min(RequestLog.requested_at)).where(and_(*conditions)))
         value = result.scalar_one_or_none()
         return value if isinstance(value, datetime) else None
 

@@ -13,9 +13,19 @@ vi.mock("recharts", async (importOriginal) => {
       <div data-testid="responsive-container">{children}</div>
     ),
     PieChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-    Pie: ({ data, dataKey, onMouseEnter, onMouseLeave }: any) => (
+    Pie: ({
+      data,
+      dataKey,
+      onMouseEnter,
+      onMouseLeave,
+    }: {
+      data: Array<{ model: string }>;
+      dataKey: string;
+      onMouseEnter?: (entry: { model: string }, index: number) => void;
+      onMouseLeave?: (entry: { model: string }, index: number) => void;
+    }) => (
       <div data-testid="model-distribution-pie" data-key={dataKey}>
-        {data.map((entry: { model: string }, index: number) => (
+        {data.map((entry, index) => (
           <button
             key={entry.model}
             type="button"
@@ -37,7 +47,7 @@ vi.mock("recharts", async (importOriginal) => {
       return cloneElement(content, {
         active: true,
         payload: [{ dataKey: "costUsd", name: "costUsd", value: 42.02, color: "#3b82f6" }],
-      } as any);
+      } as Record<string, unknown>);
     },
   };
 });
