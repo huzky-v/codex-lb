@@ -16,6 +16,7 @@ class RuntimeState:
     last_selected_at: float | None = None
     error_count: int = 0
     version: int = 0
+    health_version: int = 0
     blocked_at: float | None = None
     health_tier: int = 0
     drain_entered_at: float | None = None
@@ -24,6 +25,14 @@ class RuntimeState:
     inflight_streams: int = 0
     leased_tokens: float = 0.0
     leases: dict[str, AccountLease] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeReservation:
+    account_id: str
+    previous_last_selected_at: float | None
+    reserved_at: float
+    expected_runtime_version: int
 
 
 @dataclass(frozen=True, slots=True)

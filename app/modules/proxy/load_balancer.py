@@ -26,7 +26,6 @@ from app.core.balancer import (
     ResetPreferenceWindow,
     RoutingCostsByAccount,
     RoutingStrategy,
-    SelectionResult,
     TrafficClass,
     evaluate_health_tier,
     handle_permanent_failure,
@@ -62,14 +61,29 @@ from app.modules.proxy._load_balancer.sticky_selection import (
     SelectionInputsProtocol,
     StickySelectionRequest,
     _account_cap_error_code,
-    _account_cap_error_message,
     _clone_account,
     _filter_states_for_account_caps,
     _select_account_preferring_budget_safe,
+    _StickySelectionOutcome,
     run_sticky_selection_path,
 )
 from app.modules.proxy._load_balancer.sticky_selection import (
+    _account_cap_error_message as _account_cap_error_message,
+)
+from app.modules.proxy._load_balancer.sticky_selection import (
     _best_health_tier_states as _best_health_tier_states,
+)
+from app.modules.proxy._load_balancer.sticky_selection import (
+    _filter_recovery_probe_candidates as _filter_recovery_probe_candidates,
+)
+from app.modules.proxy._load_balancer.sticky_selection import (
+    _persist_sticky_mutation as _persist_sticky_mutation,
+)
+from app.modules.proxy._load_balancer.sticky_selection import (
+    _probing_result_requires_recovery_reservation as _probing_result_requires_recovery_reservation,
+)
+from app.modules.proxy._load_balancer.sticky_selection import (
+    _restore_sticky_mutation as _restore_sticky_mutation,
 )
 from app.modules.proxy._load_balancer.sticky_selection import (
     _select_with_stickiness as _run_select_with_stickiness,
@@ -81,13 +95,15 @@ from app.modules.proxy._load_balancer.sticky_selection import (
     _state_above_sticky_budget_threshold as _state_above_sticky_budget_threshold,
 )
 from app.modules.proxy._load_balancer.types import (
-    MAX_SELECTION_ATTEMPTS as _MAX_SELECTION_ATTEMPTS,
-)
-from app.modules.proxy._load_balancer.types import (
     AccountConcurrencyCaps,
     AccountLease,
     AccountLeaseKind,
+    ProbeReservation,
     RuntimeState,
+)
+from app.modules.proxy._load_balancer.unbound_selection import (
+    UnboundSelectionRequest,
+    run_unbound_selection_path,
 )
 from app.modules.proxy.account_cache import get_account_selection_cache, mark_account_routing_unavailable
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
@@ -98,7 +114,7 @@ from app.modules.proxy.cap_partitioning import (
     partition_cap,
 )
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
-from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
+from app.modules.quota_planner.logic import PlannerSettings
 from app.modules.usage.additional_quota_keys import (
     canonicalize_additional_quota_key,
     get_additional_quota_definition,
@@ -134,6 +150,16 @@ _ADDITIONAL_QUOTA_ROUTING_POLICIES = _ACCOUNT_ROUTING_POLICIES | frozenset({"inh
 OPPORTUNISTIC_BURN_WINDOW_CLOSED = "opportunistic_burn_window_closed"
 _AMBIGUOUS_CONVERSATION_OWNER_CODE = "conversation_owner_unavailable"
 _AMBIGUOUS_CONVERSATION_OWNER_MESSAGE = "Conversation owner cannot be determined from the eligible account pool"
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizedUsageInputs:
+    primary_used: float | None
+    primary_reset: int | None
+    primary_window_minutes: int | None
+    effective_secondary_entry: _UsageWindowEntry | None
+    secondary_used: float | None
+    secondary_reset: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +286,7 @@ class LoadBalancer:
         *,
         kind: AccountLeaseKind,
         estimated_tokens: float,
+        record_selection: bool = True,
     ) -> AccountLease:
         runtime = self._runtime.setdefault(account_id, RuntimeState())
         lease = AccountLease(
@@ -277,8 +304,9 @@ class LoadBalancer:
         else:
             runtime.inflight_streams += 1
         runtime.leased_tokens += lease.estimated_tokens
-        runtime.last_selected_at = time.time()
-        runtime.version += 1
+        if record_selection:
+            runtime.last_selected_at = time.time()
+            runtime.version += 1
         _record_account_lease_acquired(kind)
         _record_account_inflight_leases(account_id, runtime)
         return lease
@@ -468,8 +496,6 @@ class LoadBalancer:
 
         selected_snapshot: Account | None = None
         error_message: str | None = None
-        selected_states: list[AccountState] = []
-        selected_account_map: dict[str, Account] = {}
         selected_lease: AccountLease | None = None
         selection_error_code: str | None = None
         legacy_existing_account_id: str | None = None
@@ -515,200 +541,39 @@ class LoadBalancer:
                 error_code=selection_inputs.error_code,
             )
         if sticky_key is None:
-            attempt = 0
-            while True:
-                attempt += 1
-                async with self._runtime_lock:
-                    self._reclaim_stale_account_leases_locked()
-                    self._prune_runtime(selection_inputs.runtime_accounts or selection_inputs.accounts)
-                    states, account_map = _build_states(
-                        accounts=selection_inputs.accounts,
-                        latest_primary=selection_inputs.latest_primary,
-                        latest_secondary=selection_inputs.latest_secondary,
-                        latest_monthly=selection_inputs.latest_monthly,
-                        runtime=self._runtime,
-                        routing_policy_override=selection_inputs.routing_policy_override,
-                        ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
-                    )
-                    if required_account_id is not None:
-                        # Keep ownership validation on the full candidate pool,
-                        # then narrow only the effective routing states. This is
-                        # what prevents a preferred file owner from manufacturing
-                        # uniqueness for an unrelated `conversation` object.
-                        states = [state for state in states if state.account_id == required_account_id]
-                        account_map = {
-                            account_id: account
-                            for account_id, account in account_map.items()
-                            if account_id == required_account_id
-                        }
-                    effective_routing_costs = (
-                        routing_costs_by_account_id
-                        if routing_costs_by_account_id is not None
-                        else build_routing_costs(
-                            settings=selection_inputs.quota_planner_settings,
-                            states=states,
-                            now=datetime.now(timezone.utc),
-                        )
-                    )
-                    selection_states = _filter_states_for_account_caps(
-                        states,
-                        lease_kind=lease_kind,
-                        caps=caps,
-                        stream_reserve_slots=stream_reserve_slots,
-                    )
-                    if not selection_states and states:
-                        selection_error_code = _account_cap_error_code(lease_kind)
-                        error_message = _account_cap_error_message(lease_kind, caps)
-                        result = SelectionResult(None, error_message)
-                        logger.warning(
-                            "Account cap exhausted during selection lease_kind=%s reason=%s candidates=%s",
-                            lease_kind,
-                            selection_error_code,
-                            len(states),
-                        )
-                        _record_account_cap_rejection(lease_kind)
-                    else:
-                        selection_error_code = None
-                        result = _select_account_preferring_budget_safe(
-                            selection_states,
-                            prefer_earlier_reset=prefer_earlier_reset_accounts,
-                            prefer_earlier_reset_window=prefer_earlier_reset_window,
-                            routing_strategy=routing_strategy,
-                            relative_availability_power=relative_availability_power,
-                            relative_availability_top_k=relative_availability_top_k,
-                            budget_threshold_pct=budget_threshold_pct,
-                            secondary_budget_threshold_pct=secondary_budget_threshold_pct,
-                            traffic_class=traffic_class,
-                            ignore_standard_quota=False,
-                            routing_costs_by_account_id=effective_routing_costs,
-                        )
-
-                    selected_account_map = account_map
-                    selected_states = []
-                    for state in states:
-                        account = account_map.get(state.account_id)
-                        if account is None:
-                            continue
-                        self._sync_runtime_state(
-                            account,
-                            state,
-                            selected=result.account is not None and state.account_id == result.account.account_id,
-                        )
-                        selected_states.append(state)
-
-                    if result.account is not None:
-                        selected = account_map.get(result.account.account_id)
-                        if selected is None:
-                            error_message = result.error_message
-                        else:
-                            selected_reset_at = selected.reset_at
-                            for state in selected_states:
-                                if state.account_id == result.account.account_id:
-                                    state.status = result.account.status
-                                    state.deactivation_reason = result.account.deactivation_reason
-                                    selected_reset_at = int(state.reset_at) if state.reset_at else None
-                                    break
-                            if lease_kind is not None:
-                                selected_lease = self._acquire_account_lease_locked(
-                                    selected.id,
-                                    kind=lease_kind,
-                                    estimated_tokens=estimated_lease_tokens,
-                                )
-                            selected_snapshot = _clone_account(selected)
-                            selected_snapshot.status = result.account.status
-                            selected_snapshot.deactivation_reason = result.account.deactivation_reason
-                            selected_snapshot.reset_at = selected_reset_at
-                    else:
-                        error_message = result.error_message
-
-                pre_persist_runtime_state = {
-                    aid: (
-                        runtime.reset_at,
-                        runtime.cooldown_until,
-                        runtime.error_count,
-                        runtime.last_error_at,
-                    )
-                    for aid, runtime in self._runtime.items()
-                }
-                pre_persist_cache_generation = self._selection_inputs_cache.generation
-
-                try:
-                    async with self._repo_factory() as repos:
-                        stale_account_ids = await self._persist_selection_state(
-                            repos.accounts,
-                            selected_account_map,
-                            selected_states,
-                        )
-                except BaseException:
-                    await self.release_account_lease(selected_lease)
-                    selected_lease = None
-                    raise
-                stale_account_ids = stale_account_ids or set()
-                if selected_snapshot is not None and selected_snapshot.id in stale_account_ids:
-                    await self.release_account_lease(selected_lease)
-                    selected_lease = None
-                    if attempt >= _MAX_SELECTION_ATTEMPTS:
-                        selected_snapshot = None
-                        error_message = None
-                        break
-                    selection_inputs = await load_selection_inputs()
-                    if selection_inputs.error_code is not None and not selection_inputs.accounts:
-                        return AccountSelection(
-                            account=None,
-                            error_message=selection_inputs.error_message,
-                            error_code=selection_inputs.error_code,
-                        )
-                    selected_snapshot = None
-                    error_message = None
-                    selected_states = []
-                    selected_account_map = {}
-                    continue
-
-                if (
-                    selected_snapshot is not None
-                    and self._selection_inputs_cache.generation != pre_persist_cache_generation
-                    and attempt < _MAX_SELECTION_ATTEMPTS
-                ):
-                    await self.release_account_lease(selected_lease)
-                    selected_lease = None
-                    selection_inputs = await load_selection_inputs()
-                    if selection_inputs.error_code is not None and not selection_inputs.accounts:
-                        return AccountSelection(
-                            account=None,
-                            error_message=selection_inputs.error_message,
-                            error_code=selection_inputs.error_code,
-                        )
-                    selected_snapshot = None
-                    error_message = None
-                    selected_states = []
-                    selected_account_map = {}
-                    await asyncio.sleep(0)
-                    continue
-
-                if selected_snapshot is None and error_message == "No available accounts":
-                    runtime_recovered = any(
-                        self._runtime.get(account_id, RuntimeState()).reset_at != before[0]
-                        or self._runtime.get(account_id, RuntimeState()).cooldown_until != before[1]
-                        or self._runtime.get(account_id, RuntimeState()).error_count != before[2]
-                        or self._runtime.get(account_id, RuntimeState()).last_error_at != before[3]
-                        for account_id, before in pre_persist_runtime_state.items()
-                    )
-                    if runtime_recovered and attempt < _MAX_SELECTION_ATTEMPTS:
-                        selection_inputs = await load_selection_inputs()
-                        if selection_inputs.error_code is not None and not selection_inputs.accounts:
-                            return AccountSelection(
-                                account=None,
-                                error_message=selection_inputs.error_message,
-                                error_code=selection_inputs.error_code,
-                            )
-                        error_message = None
-                        selected_states = []
-                        selected_account_map = {}
-                        await asyncio.sleep(0)
-                        continue
-
-                break
-
+            unbound_outcome = await run_unbound_selection_path(
+                self,
+                request=UnboundSelectionRequest(
+                    prefer_earlier_reset_accounts=prefer_earlier_reset_accounts,
+                    prefer_earlier_reset_window=prefer_earlier_reset_window,
+                    routing_strategy=routing_strategy,
+                    relative_availability_power=relative_availability_power,
+                    relative_availability_top_k=relative_availability_top_k,
+                    required_account_id=required_account_id,
+                    budget_threshold_pct=budget_threshold_pct,
+                    secondary_budget_threshold_pct=secondary_budget_threshold_pct,
+                    routing_costs_by_account_id=routing_costs_by_account_id,
+                    lease_kind=lease_kind,
+                    estimated_lease_tokens=estimated_lease_tokens,
+                    stream_reserve_slots=stream_reserve_slots,
+                    traffic_class=traffic_class,
+                    concurrency_caps=caps,
+                    selection_inputs=selection_inputs,
+                    reload_inputs=load_selection_inputs,
+                    record_account_cap_rejection=_record_account_cap_rejection,
+                ),
+            )
+            selection_inputs = unbound_outcome.selection_inputs
+            selected_snapshot = unbound_outcome.selected_snapshot
+            selected_lease = unbound_outcome.selected_lease
+            error_message = unbound_outcome.error_message
+            selection_error_code = unbound_outcome.error_code
+            if unbound_outcome.disposition == "direct_error":
+                return AccountSelection(
+                    account=None,
+                    error_message=error_message,
+                    error_code=selection_error_code,
+                )
         else:
             sticky_outcome = await run_sticky_selection_path(
                 self,
@@ -763,7 +628,7 @@ class LoadBalancer:
             )
 
         if selected_snapshot is None:
-            if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC and error_message:
+            if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC and error_message and selection_error_code is None:
                 return AccountSelection(
                     account=None,
                     error_message=error_message,
@@ -795,6 +660,103 @@ class LoadBalancer:
                 ),
             ),
         )
+
+    def _reserve_due_probe_locked(
+        self,
+        states: list[AccountState],
+        *,
+        prefer_earlier_reset: bool,
+        prefer_earlier_reset_window: ResetPreferenceWindow,
+        routing_strategy: RoutingStrategy,
+        relative_availability_power: float,
+        relative_availability_top_k: int,
+        traffic_class: TrafficClass,
+        routing_costs_by_account_id: RoutingCostsByAccount | None,
+    ) -> ProbeReservation | None:
+        if routing_strategy in ("sequential_drain", "reset_drain", "single_account"):
+            return None
+        result = select_account(
+            states,
+            prefer_earlier_reset=prefer_earlier_reset,
+            prefer_earlier_reset_window=prefer_earlier_reset_window,
+            routing_strategy=routing_strategy,
+            recovery_probe_only=True,
+            relative_availability_power=relative_availability_power,
+            relative_availability_top_k=relative_availability_top_k,
+            traffic_class=traffic_class,
+            routing_costs=routing_costs_by_account_id,
+        )
+        if result.account is None:
+            return None
+        runtime = self._runtime.get(result.account.account_id)
+        if runtime is None:
+            return None
+        if runtime.health_tier != result.account.health_tier:
+            return None
+        if runtime.last_selected_at != result.account.last_selected_at:
+            return None
+        # Keep the current state snapshot due for this request while making a
+        # concurrent snapshot observe the reservation before sticky DB I/O.
+        # This is not a health observation, so it must not advance ``version``
+        # and invalidate an operator Force Probe that is loading usage.
+        previous_last_selected_at = runtime.last_selected_at
+        reserved_at = time.time()
+        runtime.last_selected_at = reserved_at
+        return ProbeReservation(
+            account_id=result.account.account_id,
+            previous_last_selected_at=previous_last_selected_at,
+            reserved_at=reserved_at,
+            expected_runtime_version=runtime.version,
+        )
+
+    def _probe_reservation_current_locked(self, reservation: ProbeReservation | None) -> bool:
+        if reservation is None:
+            return False
+        runtime = self._runtime.get(reservation.account_id)
+        return bool(
+            runtime is not None
+            and runtime.last_selected_at == reservation.reserved_at
+            and runtime.version == reservation.expected_runtime_version
+        )
+
+    def _release_due_probe_reservation_locked(self, reservation: ProbeReservation | None) -> None:
+        if reservation is None:
+            return
+        runtime = self._runtime.get(reservation.account_id)
+        # An actual concurrent selection replaces this exact timestamp and
+        # owns the admission. Unrelated runtime changes may advance version but
+        # must not turn a temporary reservation into a consumed probe interval.
+        if runtime is None or runtime.last_selected_at != reservation.reserved_at:
+            return
+        runtime.last_selected_at = reservation.previous_last_selected_at
+
+    def _commit_due_probe_reservation_locked(self, reservation: ProbeReservation | None) -> bool:
+        if reservation is None:
+            return False
+        runtime = self._runtime.get(reservation.account_id)
+        if runtime is None or not self._probe_reservation_current_locked(reservation):
+            return False
+        # Only a selection that survived sticky persistence and final local
+        # admission consumes the quiet interval. Unlike reserve/release, this
+        # committed observation must invalidate older Force Probe settlement.
+        runtime.last_selected_at = time.time()
+        runtime.version += 1
+        runtime.health_version += 1
+        return True
+
+    def _sync_committed_probe_state_locked(
+        self,
+        reservation: ProbeReservation,
+        account_map: Mapping[str, Account],
+        states: Collection[AccountState],
+    ) -> None:
+        account = account_map.get(reservation.account_id)
+        if account is None:
+            return
+        for state in states:
+            if state.account_id == reservation.account_id:
+                self._sync_runtime_state(account, state)
+                return
 
     async def _load_selection_inputs(
         self,
@@ -1339,7 +1301,7 @@ class LoadBalancer:
         preserve_existing_mapping_on_fallback: bool = False,
         traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
         ignore_standard_quota: bool = False,
-    ) -> SelectionResult:
+    ) -> _StickySelectionOutcome:
         return await _run_select_with_stickiness(
             states=states,
             account_map=account_map,
@@ -1361,6 +1323,9 @@ class LoadBalancer:
             traffic_class=traffic_class,
             ignore_standard_quota=ignore_standard_quota,
         )
+
+    _persist_sticky_mutation = staticmethod(_persist_sticky_mutation)
+    _restore_sticky_mutation = staticmethod(_restore_sticky_mutation)
 
     async def mark_rate_limit(self, account: Account, error: UpstreamError) -> None:
         lock = await self._get_account_lock(account.id)
@@ -1462,9 +1427,120 @@ class LoadBalancer:
                 runtime.error_count = 0
                 runtime.last_error_at = None
                 runtime.version += 1
+                runtime.health_version += 1
             if runtime and runtime.health_tier == HEALTH_TIER_PROBING:
                 runtime.probe_success_streak += 1
                 runtime.version += 1
+                runtime.health_version += 1
+
+    async def record_probe_result(
+        self,
+        *,
+        account_id: str,
+        http_status: int,
+    ) -> None:
+        """Settle an operator probe into this replica's advisory health state."""
+        lock = await self._get_account_lock(account_id)
+        if not 200 <= http_status < 300:
+            async with lock:
+                runtime = self._runtime.setdefault(account_id, RuntimeState())
+                if runtime.probe_success_streak > 0:
+                    runtime.probe_success_streak = 0
+                runtime.version += 1
+                runtime.health_version += 1
+            return
+
+        # Usage reads intentionally run without the per-account lock. Capture a
+        # health-observation token first so an older successful probe cannot
+        # clear a failure or health-tier change recorded while those reads are
+        # in flight, while lease-only pressure changes remain harmless.
+        async with lock:
+            expected_health_version = self._runtime.setdefault(account_id, RuntimeState()).health_version
+
+        async with self._repo_factory() as repos:
+            account = await repos.accounts.get_by_id(account_id)
+            if account is None:
+                return
+            primary_entry = await repos.usage.latest_entry_for_account(account_id, window="primary")
+            secondary_entry = await repos.usage.latest_entry_for_account(account_id, window="secondary")
+            monthly_entry = await repos.usage.latest_entry_for_account(account_id, window="monthly")
+            # Force Probe must interpret refreshed rows exactly like ordinary
+            # routing: raw storage slots do not identify weekly/monthly meaning.
+            effective_secondary_entry = _select_long_window_entry(
+                account=account,
+                monthly_entry=monthly_entry,
+                secondary_entry=secondary_entry,
+            )
+            normalized_usage = _normalize_usage_inputs(
+                account=account,
+                primary_entry=primary_entry,
+                secondary_entry=effective_secondary_entry,
+                now_epoch=int(time.time()),
+            )
+            health_primary_used = _health_tier_primary_used(
+                plan_type=account.plan_type,
+                primary_used=normalized_usage.primary_used,
+            )
+            routing_policy = _normalize_account_routing_policy(account.routing_policy)
+
+        async with lock:
+            runtime = self._runtime.setdefault(account_id, RuntimeState())
+            # Treat settlement as a local CAS: the newer runtime health
+            # observation wins, and a later probe can retry with a fresh usage
+            # snapshot. Lease-only version bumps must not drop Force Probe.
+            if runtime.health_version != expected_health_version:
+                return
+
+            normalized_state = _state_from_account(
+                account=account,
+                primary_entry=primary_entry,
+                secondary_entry=effective_secondary_entry,
+                runtime=replace(runtime),
+            )
+            account_status = normalized_state.status
+            if account_status != AccountStatus.ACTIVE:
+                return
+
+            settings = get_settings()
+            now = time.time()
+            was_probe_eligible = runtime.health_tier == HEALTH_TIER_PROBING
+            if was_probe_eligible and (runtime.error_count > 0 or runtime.last_error_at is not None):
+                runtime.error_count = 0
+                runtime.last_error_at = None
+                runtime.version += 1
+                runtime.health_version += 1
+
+            _sync_runtime_health_tier(
+                account_id=account_id,
+                status=account_status,
+                used_percent=health_primary_used,
+                secondary_used_percent=normalized_usage.secondary_used,
+                routing_policy=routing_policy,
+                runtime=runtime,
+                now=now,
+                soft_drain_enabled=getattr(settings, "soft_drain_enabled", True),
+            )
+            if runtime.health_tier != HEALTH_TIER_PROBING:
+                return
+            if not was_probe_eligible and (runtime.error_count > 0 or runtime.last_error_at is not None):
+                runtime.error_count = 0
+                runtime.last_error_at = None
+                runtime.version += 1
+                runtime.health_version += 1
+
+            runtime.probe_success_streak += 1
+            runtime.version += 1
+            runtime.health_version += 1
+            _sync_runtime_health_tier(
+                account_id=account_id,
+                status=account_status,
+                used_percent=health_primary_used,
+                secondary_used_percent=normalized_usage.secondary_used,
+                routing_policy=routing_policy,
+                runtime=runtime,
+                now=now,
+                soft_drain_enabled=getattr(settings, "soft_drain_enabled", True),
+            )
 
     def _state_for(self, account: Account) -> AccountState:
         runtime = self._runtime.setdefault(account.id, RuntimeState())
@@ -1524,11 +1600,14 @@ class LoadBalancer:
             dirty = True
         if account.deactivation_reason != state.deactivation_reason:
             dirty = True
+        health_dirty = dirty
         if selected:
             runtime.last_selected_at = time.time()
             dirty = True
         if dirty:
             runtime.version += 1
+        if health_dirty:
+            runtime.health_version += 1
         return True
 
     async def _persist_selection_state(
@@ -1779,29 +1858,18 @@ def _state_from_account(
     runtime: RuntimeState,
 ) -> AccountState:
     routing_policy = _normalize_account_routing_policy(getattr(account, "routing_policy", None))
-    primary_used = primary_entry.used_percent if primary_entry else None
-    primary_reset = primary_entry.reset_at if primary_entry else None
-    primary_window_minutes = primary_entry.window_minutes if primary_entry else None
-    effective_secondary_entry = secondary_entry
-    if (
-        effective_secondary_entry is not None
-        and effective_secondary_entry.window == "monthly"
-        and usage_core.capacity_for_plan(account.plan_type, "monthly") is None
-    ):
-        effective_secondary_entry = None
-    primary_row = usage_history_to_window_row(primary_entry) if primary_entry is not None else None
-    secondary_row = usage_history_to_window_row(secondary_entry) if secondary_entry is not None else None
-    # Weekly-only accounts may not emit a dedicated secondary row; treat the
-    # weekly primary row as quota-window input for balancer decisions. When
-    # both rows exist, prefer the newer weekly snapshot.
-    if primary_row is not None and usage_core.should_use_weekly_primary(primary_row, secondary_row):
-        effective_secondary_entry = primary_entry
-        primary_used = None
-        primary_reset = None
-        primary_window_minutes = None
-
-    secondary_used = effective_secondary_entry.used_percent if effective_secondary_entry else None
-    secondary_reset = effective_secondary_entry.reset_at if effective_secondary_entry else None
+    normalized_usage = _normalize_usage_inputs(
+        account=account,
+        primary_entry=primary_entry,
+        secondary_entry=secondary_entry,
+        now_epoch=int(time.time()),
+    )
+    primary_used = normalized_usage.primary_used
+    primary_reset = normalized_usage.primary_reset
+    primary_window_minutes = normalized_usage.primary_window_minutes
+    effective_secondary_entry = normalized_usage.effective_secondary_entry
+    secondary_used = normalized_usage.secondary_used
+    secondary_reset = normalized_usage.secondary_reset
     credits_has, credits_unlimited, credits_balance = _extract_credit_status(
         primary_entry,
         effective_secondary_entry,
@@ -1839,7 +1907,6 @@ def _state_from_account(
     if secondary_used is not None and secondary_reset is not None and secondary_reset <= now_epoch:
         secondary_used = 0.0
         secondary_reset = None
-
     ignore_zero_capacity_primary_runtime_reset = False
     status_seed = account.status
     long_window_quota_available = (
@@ -1901,7 +1968,10 @@ def _state_from_account(
             )
         )
     ):
-        primary_used = None
+        primary_used = _health_tier_primary_used(
+            plan_type=account.plan_type,
+            primary_used=primary_used,
+        )
         primary_reset = None
         primary_window_minutes = None
         ignore_zero_capacity_primary_runtime_reset = account.status == AccountStatus.RATE_LIMITED
@@ -2063,36 +2133,16 @@ def _state_from_account(
         next_blocked_at = None
 
     settings = get_settings()
-    if getattr(settings, "soft_drain_enabled", True):
-        new_tier = evaluate_health_tier(
-            AccountState(
-                account_id=account.id,
-                status=status,
-                used_percent=used_percent,
-                secondary_used_percent=secondary_used,
-                last_error_at=runtime.last_error_at,
-                error_count=runtime.error_count,
-                health_tier=runtime.health_tier,
-                routing_policy=routing_policy,
-            ),
-            now=time.time(),
-            drain_entered_at=runtime.drain_entered_at,
-            probe_success_streak=runtime.probe_success_streak,
-            # Drain/probe thresholds are the fixed constants in
-            # ``app/core/balancer/logic.py`` (evaluate_health_tier defaults).
-        )
-        if new_tier == HEALTH_TIER_DRAINING and runtime.health_tier != HEALTH_TIER_DRAINING:
-            runtime.drain_entered_at = time.time()
-            runtime.probe_success_streak = 0
-        if new_tier == HEALTH_TIER_HEALTHY:
-            runtime.drain_entered_at = None
-            runtime.probe_success_streak = 0
-        runtime.health_tier = new_tier
-    else:
-        new_tier = HEALTH_TIER_HEALTHY
-        runtime.drain_entered_at = None
-        runtime.probe_success_streak = 0
-        runtime.health_tier = HEALTH_TIER_HEALTHY
+    new_tier = _sync_runtime_health_tier(
+        account_id=account.id,
+        status=status,
+        used_percent=used_percent,
+        secondary_used_percent=secondary_used,
+        routing_policy=routing_policy,
+        runtime=runtime,
+        now=time.time(),
+        soft_drain_enabled=getattr(settings, "soft_drain_enabled", True),
+    )
 
     inflight_pressure_pct = (runtime.inflight_response_creates + runtime.inflight_streams) * getattr(
         settings, "proxy_account_inflight_penalty_pct", 2.5
@@ -2132,6 +2182,136 @@ def _state_from_account(
         leased_tokens=runtime.leased_tokens,
         routing_policy=routing_policy,
     )
+
+
+def _normalize_usage_inputs(
+    *,
+    account: Account,
+    primary_entry: _UsageWindowEntry | None,
+    secondary_entry: _UsageWindowEntry | None,
+    now_epoch: int,
+) -> _NormalizedUsageInputs:
+    """Normalize persisted usage for routing and explicit probe settlement."""
+    primary_used = primary_entry.used_percent if primary_entry else None
+    primary_reset = primary_entry.reset_at if primary_entry else None
+    primary_window_minutes = primary_entry.window_minutes if primary_entry else None
+    effective_secondary_entry = secondary_entry
+    if (
+        effective_secondary_entry is not None
+        and effective_secondary_entry.window == "monthly"
+        and usage_core.capacity_for_plan(account.plan_type, "monthly") is None
+    ):
+        effective_secondary_entry = None
+    primary_row = usage_history_to_window_row(primary_entry) if primary_entry is not None else None
+    secondary_row = usage_history_to_window_row(secondary_entry) if secondary_entry is not None else None
+    # Weekly-only accounts may not emit a dedicated secondary row; treat the
+    # weekly primary row as quota-window input for balancer decisions. When
+    # both rows exist, prefer the newer weekly snapshot.
+    if primary_row is not None and usage_core.should_use_weekly_primary(primary_row, secondary_row):
+        effective_secondary_entry = primary_entry
+        primary_used = None
+        primary_reset = None
+        primary_window_minutes = None
+
+    secondary_used = effective_secondary_entry.used_percent if effective_secondary_entry else None
+    secondary_reset = effective_secondary_entry.reset_at if effective_secondary_entry else None
+
+    # Expired rows describe prior windows. Zero derived values without
+    # rewriting history so stale samples cannot hold drain tiers forever.
+    if primary_used is not None and primary_reset is not None and primary_reset <= now_epoch:
+        primary_used = 0.0
+        primary_reset = None
+    # A strictly newer long-window row proves a later fetch no longer
+    # reported the short window, so phase planning drops the stale duration.
+    if (
+        primary_window_minutes is not None
+        and primary_entry is not None
+        and effective_secondary_entry is not None
+        and effective_secondary_entry is not primary_entry
+        and (effective_secondary_entry.recorded_at - primary_entry.recorded_at).total_seconds()
+        > _SIBLING_FETCH_MARGIN_SECONDS
+    ):
+        primary_window_minutes = None
+    if secondary_used is not None and secondary_reset is not None and secondary_reset <= now_epoch:
+        secondary_used = 0.0
+        secondary_reset = None
+
+    return _NormalizedUsageInputs(
+        primary_used=primary_used,
+        primary_reset=primary_reset,
+        primary_window_minutes=primary_window_minutes,
+        effective_secondary_entry=effective_secondary_entry,
+        secondary_used=secondary_used,
+        secondary_reset=secondary_reset,
+    )
+
+
+def _health_tier_primary_used(*, plan_type: str | None, primary_used: float | None) -> float | None:
+    """Drop primary usage when the plan has no primary-window capacity."""
+    # Storage may retain a legacy/synthetic primary row for free accounts. The
+    # health state machine must follow plan capacity, not the row's slot, or
+    # both ordinary routing and Force Probe can drain an account on a quota it
+    # does not have.
+    if usage_core.capacity_for_plan(plan_type, "primary") == 0.0:
+        return None
+    return primary_used
+
+
+def _sync_runtime_health_tier(
+    *,
+    account_id: str,
+    status: AccountStatus,
+    used_percent: float | None,
+    secondary_used_percent: float | None,
+    routing_policy: str,
+    runtime: RuntimeState,
+    now: float,
+    soft_drain_enabled: bool,
+) -> int:
+    before = (
+        runtime.health_tier,
+        runtime.drain_entered_at,
+        runtime.probe_success_streak,
+    )
+    if soft_drain_enabled:
+        new_tier = evaluate_health_tier(
+            AccountState(
+                account_id=account_id,
+                status=status,
+                used_percent=used_percent,
+                secondary_used_percent=secondary_used_percent,
+                last_error_at=runtime.last_error_at,
+                error_count=runtime.error_count,
+                health_tier=runtime.health_tier,
+                routing_policy=routing_policy,
+            ),
+            now=now,
+            drain_entered_at=runtime.drain_entered_at,
+            probe_success_streak=runtime.probe_success_streak,
+            # Drain/probe thresholds are fixed in
+            # ``app/core/balancer/logic.py`` (evaluate_health_tier defaults).
+        )
+        if new_tier == HEALTH_TIER_DRAINING and runtime.health_tier != HEALTH_TIER_DRAINING:
+            runtime.drain_entered_at = now
+            runtime.probe_success_streak = 0
+        if new_tier == HEALTH_TIER_HEALTHY:
+            runtime.drain_entered_at = None
+            runtime.probe_success_streak = 0
+        runtime.health_tier = new_tier
+    else:
+        runtime.health_tier = HEALTH_TIER_HEALTHY
+        runtime.drain_entered_at = None
+        runtime.probe_success_streak = 0
+
+    after = (
+        runtime.health_tier,
+        runtime.drain_entered_at,
+        runtime.probe_success_streak,
+    )
+    if after != before:
+        runtime.version += 1
+        runtime.health_version += 1
+    return runtime.health_tier
 
 
 def background_recovery_state_from_account(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 
 from app.core.audit.service import AuditService
@@ -17,7 +19,7 @@ from app.core.exceptions import (
     DashboardUpstreamError,
 )
 from app.core.upstream_proxy import UpstreamProxyRouteError
-from app.dependencies import AccountsContext, get_accounts_context
+from app.dependencies import AccountsContext, get_accounts_context, get_proxy_service_for_app
 from app.modules.accounts.repository import AccountIdentityConflictError
 from app.modules.accounts.schemas import (
     AccountAliasRequest,
@@ -50,6 +52,8 @@ from app.modules.accounts.service import (
     AccountUsageResetCreditsUnavailableError,
     InvalidAuthJsonError,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/accounts",
@@ -292,6 +296,26 @@ async def probe_account(
         ) from exc
     if result is None:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
+    probe_succeeded = 200 <= result.probe_status_code < 300
+    if not probe_succeeded or result.usage_refresh_ready_for_probe_settlement():
+        try:
+            await get_proxy_service_for_app(request.app).record_account_probe_result(
+                account_id=result.account_id,
+                http_status=result.probe_status_code,
+            )
+        except Exception:
+            logger.exception(
+                "Force Probe advisory settlement failed account_id=%s probe_status_code=%s",
+                result.account_id,
+                result.probe_status_code,
+            )
+    else:
+        logger.warning(
+            "Force Probe success skipped advisory settlement before successful usage refresh fetch "
+            "account_id=%s probe_status_code=%s",
+            result.account_id,
+            result.probe_status_code,
+        )
     AuditService.log_async(
         "account_probed",
         actor_ip=request.client.host if request.client else None,
