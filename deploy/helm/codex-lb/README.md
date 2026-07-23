@@ -521,7 +521,42 @@ gatewayApi:
       namespace: gateway-system
   hostnames:
     - codex-lb.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1
+        - path:
+            type: PathPrefix
+            value: /backend-api/codex
+        - path:
+            type: PathPrefix
+            value: /backend-api/wham
+        - path:
+            type: PathPrefix
+            value: /backend-api/transcribe
+        - path:
+            type: PathPrefix
+            value: /backend-api/files
+        - path:
+            type: PathPrefix
+            value: /api/codex
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: oauth-forward-auth
 ```
+
+When `rules` is empty, the chart renders the existing catch-all route. For
+custom rules, the chart preserves their order and adds the codex-lb Service as
+the backend of every rule. Referenced extension resources must be valid for the
+HTTPRoute namespace according to the selected Gateway implementation.
 
 ### nginx annotations and responses sticky routing
 
