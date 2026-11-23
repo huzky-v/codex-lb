@@ -1202,7 +1202,9 @@ async def responses(
         return _logged_error_json_response(request, exc.status_code, exc.payload)
     source = source_selection[0] if source_selection is not None else None
     if source_selection is not None:
+        previous_model = responses_payload.model
         responses_payload.model = source_selection[1]
+        responses_payload.normalize_instruction_placement(previous_model=previous_model)
     elif not source_route_excluded and not continuity_suppressed:
         # The ordinary lookup itself missed (continuity suppression means an
         # enabled source claimed the model, so the disabled probe must not
@@ -1411,7 +1413,9 @@ async def v1_responses(
         return _logged_error_json_response(request, exc.status_code, exc.payload)
     source = source_selection[0] if source_selection is not None else None
     if source_selection is not None:
+        previous_model = responses_payload.model
         responses_payload.model = source_selection[1]
+        responses_payload.normalize_instruction_placement(previous_model=previous_model)
     elif not source_route_excluded and not continuity_suppressed:
         # The ordinary lookup itself missed (continuity suppression means an
         # enabled source claimed the model, so the disabled probe must not

@@ -16,6 +16,80 @@ from app.modules.proxy.replay_safety import (
 )
 
 
+@pytest.mark.parametrize("tool_loop", [False, True])
+def test_full_resend_accepts_original_leading_instruction_prefix(tool_loop: bool) -> None:
+    instructions: list[JsonValue] = [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "top"}]},
+        {"role": "developer", "content": "sys"},
+    ]
+    stored_input: list[JsonValue] = [*instructions, {"role": "user", "content": "first question"}]
+    suffix: list[JsonValue] = (
+        [
+            {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "call_1", "output": "result"},
+        ]
+        if tool_loop
+        else [
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "answer"}]},
+            {"role": "user", "content": "next question"},
+        ]
+    )
+    projection = project_responses_input_for_account_neutral_fresh_replay(
+        [*stored_input, *suffix], stored_count=len(stored_input), preserve_developer_message_ids=True
+    )
+    assert projection is not None
+    assert projection.leading_instruction_count == 2
+    assert projection.input_items[:2] == instructions
+    if tool_loop:
+        assert responses_input_suffix_matches_pending_tool_calls(
+            projection.input_items,
+            stored_count=projection.stored_prefix_count,
+            pending_tool_calls={"call_1": "function_call"},
+            leading_instruction_count=projection.leading_instruction_count,
+        )
+    else:
+        assert responses_input_suffix_retains_prior_output(
+            projection.input_items,
+            stored_count=projection.stored_prefix_count,
+            leading_instruction_count=projection.leading_instruction_count,
+        )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        [{"role": "developer", "id": "msg_owned", "content": "sys"}],
+        [{"role": "developer", "id": "", "content": "sys"}],
+        [{"role": "developer", "account_id": "owned", "content": "sys"}],
+        [{"role": "developer", "content": [{"type": "input_file", "file_id": "file_owned"}]}],
+        [{"role": "developer", "content": "   "}],
+        [{"role": "developer", "type": None, "content": "sys"}],
+        [{"role": "developer", "status": "failed", "content": "sys"}],
+        [
+            {"type": "reasoning", "id": "rs_owned", "summary": []},
+            {"role": "developer", "content": "sys"},
+        ],
+        [{"role": "user", "content": "first"}, {"role": "developer", "content": "sys"}],
+    ],
+)
+def test_full_resend_does_not_invent_safe_instruction_prefix(prefix: list[JsonValue]) -> None:
+    stored_input: list[JsonValue] = [*prefix, {"role": "user", "content": "question"}]
+    suffix: list[JsonValue] = [
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "answer"}]},
+        {"role": "user", "content": "next question"},
+    ]
+    projection = project_responses_input_for_account_neutral_fresh_replay(
+        [*stored_input, *suffix], stored_count=len(stored_input), preserve_developer_message_ids=True
+    )
+    assert projection is not None
+    assert projection.leading_instruction_count == 0
+    assert not responses_input_suffix_retains_prior_output(
+        projection.input_items,
+        stored_count=projection.stored_prefix_count,
+        leading_instruction_count=projection.leading_instruction_count,
+    )
+
+
 @pytest.mark.parametrize(
     "payload",
     [

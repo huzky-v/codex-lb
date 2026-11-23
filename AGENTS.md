@@ -15,6 +15,11 @@ The `/project-conventions` skill is auto-activated on code edits (PreToolUse gua
 | Code Conventions (Full) | `/project-conventions` skill | On code edit (auto-enforced) |
 | Git Workflow | `.agents/conventions/git-workflow.md` | Commit / PR |
 
+Instruction wire shaping is owned by `app/core/openai/requests.py`. Model policy
+and source routing must reconcile instruction placement when the effective model
+crosses the cached-instruction version boundary. Replay eligibility for leading
+instructions must be proven against original input positions before projection.
+
 ## Workflow (OpenSpec-first)
 
 This repo uses **OpenSpec as the primary workflow and SSOT** for change-driven development.

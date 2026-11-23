@@ -4322,3 +4322,100 @@ async def test_v1_responses_disconnect_stamp_reaches_traced_response_through_rea
         "request_id=req_delivery_trace_stamp surface=responses outcome=terminal_after_disconnect "
         "terminal=response.completed"
     ) in records[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_backend_responses_gpt62_keeps_instruction_message_in_input(async_client, monkeypatch):
+    raw_account_id = "acc_gpt62_instruction_input"
+    auth_json = _make_auth_json(raw_account_id, "gpt62-instruction-input@example.com")
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    seen_payload: dict[str, object] = {}
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
+        del headers, access_token, account_id, base_url, raise_for_status, kwargs
+        seen_payload.update(payload.to_payload())
+        yield (
+            'data: {"type":"response.completed","response":{"id":"resp_gpt62_instruction",'
+            '"object":"response","status":"completed","usage":{"input_tokens":2,"output_tokens":1}}}\n\n'
+        )
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    request_payload = {
+        "model": "gpt-6.2-sol",
+        "instructions": "top",
+        "input": [
+            {"type": "message", "role": "system", "content": [{"type": "input_text", "text": "sys"}]},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ],
+        "stream": True,
+    }
+    async with async_client.stream(
+        "POST",
+        "/backend-api/codex/responses",
+        json=request_payload,
+    ) as resp:
+        assert resp.status_code == 200
+        _ = [line async for line in resp.aiter_lines() if line]
+
+    assert seen_payload["instructions"] == ""
+    assert seen_payload["input"] == [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "top"}]},
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["/v1/responses", "/backend-api/codex/responses", "/v1/chat/completions"])
+@pytest.mark.parametrize(
+    ("requested_model", "enforced_model"),
+    [("gpt-6.2-sol", None), ("gpt-6.1-sol", "gpt-6.2-sol"), ("gpt-6.2-sol", "gpt-6.1-sol")],
+)
+async def test_instruction_placement_uses_effective_model(
+    async_client, monkeypatch, route, requested_model, enforced_model
+):
+    auth_json = _make_auth_json("acc_instruction_policy", "instruction-policy@example.com")
+    response = await async_client.post(
+        "/api/accounts/import", files={"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    )
+    assert response.status_code == 200
+    headers = {}
+    if enforced_model is not None:
+        settings = await async_client.put("/api/settings", json={"apiKeyAuthEnabled": True})
+        assert settings.status_code == 200, settings.text
+        key = await async_client.post(
+            "/api/api-keys/", json={"name": "instruction-policy", "enforcedModel": enforced_model}
+        )
+        assert key.status_code == 200, key.text
+        headers["Authorization"] = f"Bearer {key.json()['key']}"
+
+    seen_payload = {}
+
+    async def fake_stream(payload, *args, **kwargs):
+        seen_payload.update(payload.to_payload())
+        yield 'data: {"type":"response.completed","response":{"id":"resp_instruction_policy","status":"completed"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    body = {"model": requested_model, "instructions": "top", "stream": True}
+    if route == "/v1/chat/completions":
+        body["messages"] = [{"role": "user", "content": "hi"}]
+    else:
+        body["input"] = "hi"
+    response = await async_client.post(route, json=body, headers=headers)
+    assert response.status_code == 200, response.text
+    effective_model = enforced_model or requested_model
+    assert seen_payload["model"] == effective_model
+    user = {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    if effective_model == "gpt-6.2-sol":
+        assert seen_payload["instructions"] == ""
+        assert seen_payload["input"] == [
+            {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "top"}]},
+            user,
+        ]
+    else:
+        assert seen_payload["instructions"] == "top"
+        assert seen_payload["input"] == [user]

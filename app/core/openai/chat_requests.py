@@ -15,6 +15,7 @@ from app.core.openai.requests import (
     ResponsesTextFormat,
     normalize_reasoning_aliases,
     normalize_tool_type,
+    responses_model_caches_instruction_messages,
     validate_passthrough_depth,
     validate_tool_types,
 )
@@ -185,10 +186,11 @@ class ChatCompletionsRequest(BaseModel):
         tools = _normalize_chat_tools(raw_tools)
         tool_choice = _normalize_tool_choice(raw_tool_choice)
         messages = _sanitize_user_messages(messages)
-        existing_instructions = data.pop("instructions", "") or ""
+        preserve_instruction_roles |= responses_model_caches_instruction_messages(self.model)
+        existing_instructions = str(data.pop("instructions", "") or "")
         data.pop("input", None)
         instructions, input_items = coerce_messages(
-            str(existing_instructions),
+            existing_instructions,
             cast(list[JsonValue], messages),
             preserve_instruction_roles=preserve_instruction_roles,
         )

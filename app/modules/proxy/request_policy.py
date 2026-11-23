@@ -278,12 +278,15 @@ def apply_api_key_enforcement(
     equal the enforced value (including after ``fast`` canonicalizes to
     ``priority``).
     """
+    original_model = payload.model
     client_reasoning_effort = payload._codex_lb_client_reasoning_effort or _client_reasoning_effort(payload)
     payload._codex_lb_client_reasoning_effort = client_reasoning_effort
     provider_reasoning_effort = _client_reasoning_effort_from_provider_aliases(payload)
     normalize_upstream_model_alias(payload)
 
     if api_key is None:
+        if isinstance(payload, ResponsesRequest):
+            payload.normalize_instruction_placement(previous_model=original_model)
         _materialize_provider_reasoning_effort(payload, provider_reasoning_effort)
         pre_normalization_effort = normalize_unsupported_reasoning_effort(payload, registry=registry)
         apply_prohibit_fast_mode(payload, prohibit_fast_mode=prohibit_fast_mode)
@@ -333,6 +336,8 @@ def apply_api_key_enforcement(
                 api_key.enforced_reasoning_effort,
             )
 
+    if isinstance(payload, ResponsesRequest):
+        payload.normalize_instruction_placement(previous_model=original_model)
     _materialize_provider_reasoning_effort(payload, provider_reasoning_effort)
     if client_reasoning_effort is not None:
         validate_reasoning_effort_access(api_key, client_reasoning_effort)

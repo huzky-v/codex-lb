@@ -9453,10 +9453,12 @@ async def test_backend_responses_verified_full_resend_ignores_stale_broad_owner_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["gpt-5.1", "gpt-6.2-sol"])
 async def test_backend_responses_verified_full_resend_fails_over_to_new_account_after_owner_loss(
     async_client,
     app_instance,
     monkeypatch,
+    model,
 ):
     _install_bridge_settings(monkeypatch, enabled=True)
     owner_account_id = await _import_account(
@@ -9496,6 +9498,11 @@ async def test_backend_responses_verified_full_resend_fails_over_to_new_account_
     monkeypatch.setattr(load_balancer_module, "set_degraded", degraded_reasons.append)
 
     session_id = "backend-full-resend-failover-session"
+    instruction_prefix = (
+        [{"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Return exactly OK."}]}]
+        if model == "gpt-6.2-sol"
+        else []
+    )
     historical_input: list[proxy_module.JsonValue] = [
         {
             "role": "user",
@@ -9506,7 +9513,7 @@ async def test_backend_responses_verified_full_resend_fails_over_to_new_account_
         async_client,
         "/backend-api/codex/responses",
         json_body={
-            "model": "gpt-5.1",
+            "model": model,
             "instructions": "Return exactly OK.",
             "input": historical_input,
             "stream": True,
@@ -9527,7 +9534,7 @@ async def test_backend_responses_verified_full_resend_fails_over_to_new_account_
     )
     assert durable_lookup is not None
     assert durable_lookup.account_id == owner_account.id
-    assert durable_lookup.latest_input_item_count == len(historical_input)
+    assert durable_lookup.latest_input_item_count == len(instruction_prefix) + len(historical_input)
     assert durable_lookup.latest_input_full_fingerprint is not None
 
     alternate_account_id = await _import_account(
@@ -9552,7 +9559,7 @@ async def test_backend_responses_verified_full_resend_fails_over_to_new_account_
         async_client,
         "/backend-api/codex/responses",
         json_body={
-            "model": "gpt-5.1",
+            "model": model,
             "instructions": "Return exactly OK.",
             "input": full_resend,
             "stream": True,
@@ -9582,7 +9589,8 @@ async def test_backend_responses_verified_full_resend_fails_over_to_new_account_
     assert len(alternate_upstream.sent_text) == 1
     replay_payload = json.loads(alternate_upstream.sent_text[0])
     assert "previous_response_id" not in replay_payload
-    assert replay_payload["input"] == full_resend
+    assert replay_payload["input"] == [*instruction_prefix, *full_resend]
+    assert replay_payload["instructions"] == ("" if instruction_prefix else "Return exactly OK.")
     assert degraded_reasons == []
 
 

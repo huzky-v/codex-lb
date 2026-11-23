@@ -999,3 +999,60 @@ def test_chat_rejects_unknown_message_role():
     }
     with pytest.raises(ValidationError, match="Unsupported message role"):
         ChatCompletionsRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize("model", ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.10-sol", "gpt-7-sol"])
+def test_chat_gpt62_and_later_keep_system_messages_in_input(model: str) -> None:
+    req = ChatCompletionsRequest.model_validate(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hi"},
+            ],
+        }
+    )
+
+    responses = req.to_responses_request()
+    payload = responses.to_payload()
+
+    assert payload["instructions"] == ""
+    assert payload["input"] == [
+        {"role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
+
+
+def test_chat_gpt61_still_hoists_system_messages() -> None:
+    req = ChatCompletionsRequest.model_validate(
+        {
+            "model": "gpt-6.1-sol",
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hi"},
+            ],
+        }
+    )
+
+    responses = req.to_responses_request()
+
+    assert responses.instructions == "sys"
+    assert responses.input == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+
+
+def test_chat_gpt62_moves_top_level_instructions_to_input() -> None:
+    req = ChatCompletionsRequest.model_validate(
+        {
+            "model": "gpt-6.2-sol",
+            "messages": [{"role": "user", "content": "hi"}],
+            "instructions": "top",
+        }
+    )
+
+    responses = req.to_responses_request()
+
+    assert responses.instructions == ""
+    assert responses.input == [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "top"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
