@@ -756,3 +756,41 @@ async def test_v1_chat_completions_stream_include_usage(async_client, monkeypatc
     assert chunks[-2]["usage"] is None
     assert chunks[-1]["choices"] == []
     assert chunks[-1]["usage"]["total_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_v1_chat_completions_gpt62_keeps_system_message_in_input(async_client, monkeypatch):
+    email = "chatgpt62instruction@example.com"
+    raw_account_id = "acc_chat_gpt62_instruction"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    seen_payload: dict[str, object] = {}
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
+        del headers, access_token, account_id, base_url, raise_for_status, kwargs
+        seen_payload.update(payload.to_payload())
+        yield 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+        yield 'data: {"type":"response.completed","response":{"id":"resp_chat_gpt62_instruction"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {
+        "model": "gpt-6.2-sol",
+        "messages": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+        ],
+        "stream": True,
+    }
+    async with async_client.stream("POST", "/v1/chat/completions", json=payload) as resp:
+        assert resp.status_code == 200
+        _ = [line async for line in resp.aiter_lines() if line]
+
+    assert seen_payload["instructions"] == ""
+    assert seen_payload["input"] == [
+        {"role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]

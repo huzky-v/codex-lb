@@ -14,6 +14,36 @@ See `openspec/specs/responses-api-compat/spec.md` for normative requirements.
 - **No truncation support:** Requests that include `truncation` are rejected because upstream does not support it.
 - **Compact as a separate contract:** Standalone compact is treated as a canonical opaque context-window contract, not as a variant of buffered normal `/responses`.
 
+## Cached instruction placement and bridge recovery
+
+Instruction wire placement belongs to the shared Responses normalizer in
+`app/core/openai/requests.py`. It keeps GPT-6.2-or-later text-only instructions
+in a developer-message input prefix to preserve the cached input shape. Model
+policy and source selection reconcile placement when the effective upstream
+model changes across that version boundary. Compact and Responses Lite retain
+their separate normalization rules; mixed-content instructions retain hoisting.
+
+For example, `instructions: "Be concise", input: "Hello"` becomes a developer
+message followed by a user message on GPT-6.2, with empty top-level
+`instructions`. A key enforcing GPT-6.1 instead keeps the instruction text at
+top level. String input and an equivalent user-message array share the same
+instruction placement.
+
+Bridge recovery fingerprints the full normalized input. Its projection records
+the length of the original contiguous, validated instruction prefix, allowing
+the existing prior-output and pending-tool-call settlement checks to ignore
+those instructions without deleting them from replay. Prefix eligibility is
+decided before dropping reasoning items or stripping response-owned IDs: doing
+either first could make an owned or non-leading developer message appear
+portable. Unknown fields and file references also prevent a message from gaining
+replay eligibility through the prefix rule.
+
+For example, a verified full resend retaining its instruction prefix, prior
+output, and new user input can recover after owner loss on another eligible
+account without the old account's previous-response ID. A developer message
+preceded by a response-owned reasoning item does not become a leading prefix
+merely because projection removes that reasoning item.
+
 ## Constraints
 
 - Public-contract SSE filtering uses the `response.*` and `error` families, so

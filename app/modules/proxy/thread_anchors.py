@@ -46,8 +46,10 @@ prefix" fallback: partial evidence merges unrelated threads onto one account,
 which is strictly worse than the churn this module removes.
 
 Item digests are domain-separated by (api key id, model class, **full**
-instructions). Two threads whose instructions differ only after the first 512
-characters -- which collide today -- therefore never share an anchor.
+instruction text) — the top-level `instructions` value or, when that is empty,
+the leading developer instruction messages. Two threads whose instructions
+differ only after the first 512 characters -- which collide today -- therefore
+never share an anchor.
 
 Large items
 -----------

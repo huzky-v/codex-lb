@@ -314,6 +314,121 @@ def _is_preserved_non_message_directive(item: Mapping[str, JsonValue]) -> bool:
     return item_type is not None and item_type != "message"
 
 
+_GPT_VERSION_PATTERN = re.compile(r"^gpt-(\d+)(?:\.(\d+))?(?=-|$)")
+_CACHED_INSTRUCTION_MIN_VERSION = (6, 2)
+
+
+def responses_model_caches_instruction_messages(model: JsonValue) -> bool:
+    """Whether instruction text is cacheable only inside ``input``.
+
+    Effective since GPT-6.2: that model neither reads nor writes the top-level
+    Responses ``instructions`` field in the prompt cache, while the same text
+    as a leading ``developer`` input message caches from the second step on.
+    Later GPT versions inherit the cached shape, so this gate automatically
+    covers future releases without a per-model code change.
+    """
+
+    if not isinstance(model, str):
+        return False
+    match = _GPT_VERSION_PATTERN.match(model.strip().lower())
+    if match is None:
+        return False
+    version = (int(match.group(1)), int(match.group(2) or 0))
+    return version >= _CACHED_INSTRUCTION_MIN_VERSION
+
+
+def _responses_developer_instruction_message(text: str) -> JsonValue:
+    return {
+        "type": "message",
+        "role": "developer",
+        "content": [{"type": "input_text", "text": text}],
+    }
+
+
+def _responses_instruction_messages_are_text_only(input_value: list[JsonValue]) -> bool:
+    for item in input_value:
+        item_mapping = _json_mapping_or_none(item)
+        if (
+            item_mapping is None
+            or item_mapping.get("role") not in ("system", "developer")
+            or _is_preserved_non_message_directive(item_mapping)
+        ):
+            continue
+        _, preserved_content = _split_responses_instruction_item_content(item_mapping)
+        if preserved_content is not None:
+            return False
+    return True
+
+
+def _preserve_responses_instruction_messages(
+    data: Mapping[str, JsonValue],
+    input_value: list[JsonValue],
+) -> JsonValue:
+    input_items: list[JsonValue] = []
+    changed = False
+    for item in input_value:
+        item_mapping = _json_mapping_or_none(item)
+        if (
+            item_mapping is not None
+            and item_mapping.get("role") in ("system", "developer")
+            and not _is_preserved_non_message_directive(item_mapping)
+        ):
+            text, _ = _split_responses_instruction_item_content(item_mapping)
+            if not text:
+                changed = True
+                continue
+            if item_mapping.get("role") == "system":
+                input_items.append({**item_mapping, "role": "developer"})
+                changed = True
+            else:
+                input_items.append(item)
+            continue
+        input_items.append(item)
+
+    instructions = data.get("instructions")
+    if isinstance(instructions, str) and instructions.strip():
+        input_items.insert(0, _responses_developer_instruction_message(instructions))
+        changed = True
+
+    if not changed and isinstance(instructions, str):
+        return dict(data)
+
+    normalized: MutableJsonObject = dict(data)
+    normalized["instructions"] = ""
+    normalized["input"] = input_items
+    return normalized
+
+
+def responses_leading_instruction_text(payload: ResponsesRequest | ResponsesCompactRequest) -> str:
+    """Instruction text that identifies the cached prefix for affinity."""
+
+    instructions = payload.instructions if isinstance(payload.instructions, str) else ""
+    if instructions.strip():
+        return instructions
+    input_value = payload.input
+    if not is_json_list(input_value):
+        return instructions
+
+    parts: list[str] = []
+    for item in input_value:
+        item_mapping = _json_mapping_or_none(item)
+        if item_mapping is None:
+            break
+        # The Lite prelude (``additional_tools``) precedes the developer
+        # instructions; skip it rather than treating it as the end of the
+        # instruction prefix.
+        if _is_preserved_non_message_directive(item_mapping):
+            continue
+        if item_mapping.get("role") not in ("system", "developer"):
+            break
+        text, preserved_content = _split_responses_instruction_item_content(item_mapping)
+        if preserved_content is not None:
+            break
+        if text:
+            parts.append(text)
+    return "\n".join(parts) if parts else instructions
+
+
 def _sanitize_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
     sanitized_input: list[JsonValue] = []
     for item in input_items:
@@ -332,10 +447,17 @@ def _sanitize_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
     return sanitized_input
 
 
-def _normalize_responses_input_instructions(data: JsonValue) -> JsonValue:
+def _normalize_responses_input_instructions(
+    data: JsonValue,
+    *,
+    preserve_instruction_messages: bool = False,
+) -> JsonValue:
     if not is_json_mapping(data):
         return data
     input_value = data.get("input")
+    if preserve_instruction_messages and isinstance(input_value, str):
+        input_value = _normalize_input_text(input_value)
+        data = {**data, "input": input_value}
     if not is_json_list(input_value):
         return data
     # Codex deliberately places the Lite tool bundle and base instructions in
@@ -343,6 +465,11 @@ def _normalize_responses_input_instructions(data: JsonValue) -> JsonValue:
     # developer message into the top-level ``instructions`` field.
     if responses_input_uses_lite_tools(input_value):
         return data
+    # GPT-6.2 and later cache instruction text only inside ``input``. Keep the
+    # client's message shape when every instruction message is text-only; mixed
+    # content keeps the transport-safe hoist below.
+    if preserve_instruction_messages and _responses_instruction_messages_are_text_only(input_value):
+        return _preserve_responses_instruction_messages(data, input_value)
 
     instruction_parts: list[str] = []
     input_items: list[JsonValue] = []
@@ -648,7 +775,11 @@ class ResponsesRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _move_input_instruction_messages(cls, data: JsonValue) -> JsonValue:
-        return _normalize_responses_input_instructions(data)
+        model = data.get("model") if is_json_mapping(data) else None
+        return _normalize_responses_input_instructions(
+            data,
+            preserve_instruction_messages=responses_model_caches_instruction_messages(model),
+        )
 
     model: str = Field(min_length=1)
     instructions: str
@@ -763,6 +894,21 @@ class ResponsesRequest(BaseModel):
             # an explicit client-sent ``[]``. See issue #1184.
             payload.pop("tools", None)
         return payload
+
+    def normalize_instruction_placement(self, *, previous_model: str) -> None:
+        """Reconcile instructions after policy changes the effective model."""
+        preserve_messages = responses_model_caches_instruction_messages(self.model)
+        if preserve_messages == responses_model_caches_instruction_messages(previous_model):
+            return
+        normalized = _normalize_responses_input_instructions(
+            {"instructions": self.instructions, "input": self.input},
+            preserve_instruction_messages=preserve_messages,
+        )
+        assert is_json_mapping(normalized)
+        instructions = normalized["instructions"]
+        assert isinstance(instructions, str)
+        self.instructions = instructions
+        self.input = normalized["input"]
 
     def to_payload(self) -> JsonObject:
         payload = _strip_unsupported_fields(self.model_dump_for_forwarding())

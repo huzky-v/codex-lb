@@ -25,6 +25,8 @@ from app.core.openai.requests import (
     _trim_compact_input_for_upstream,
     extract_input_file_ids,
     extract_input_image_file_references,
+    responses_leading_instruction_text,
+    responses_model_caches_instruction_messages,
 )
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 from app.core.types import JsonValue
@@ -3487,4 +3489,145 @@ def test_extract_input_image_file_references_collects_tool_output_paths():
     assert [(reference.item_index, reference.content_index, reference.file_id) for reference in references] == [
         (0, None, "file_tool"),
         (0, None, "file_nested"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gpt-5.6-sol", False),
+        ("gpt-6-sol", False),
+        ("gpt-6.1-sol", False),
+        ("gpt-6.2", True),
+        ("gpt-6.2-sol", True),
+        ("gpt-6.2-astra", True),
+        ("gpt-6.10-sol", True),
+        ("gpt-7-sol", True),
+        ("not-a-gpt-model", False),
+        ("gpt-7invalid", False),
+        ("gpt-6.2invalid", False),
+    ],
+)
+def test_instruction_input_cache_version_gate(model: str, expected: bool) -> None:
+    assert responses_model_caches_instruction_messages(model) is expected
+
+
+def test_responses_gpt62_keeps_instruction_messages_in_input() -> None:
+    payload = {
+        "model": "gpt-6.2-sol",
+        "instructions": "primary",
+        "input": [
+            {"type": "message", "role": "system", "content": [{"type": "input_text", "text": "sys"}]},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ],
+    }
+
+    forwarded = ResponsesRequest.model_validate(payload).to_payload()
+
+    assert forwarded["instructions"] == ""
+    assert forwarded["input"] == [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "primary"}]},
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
+
+
+def test_responses_gpt61_keeps_hoisting_instruction_messages() -> None:
+    payload = {
+        "model": "gpt-6.1-sol",
+        "instructions": "primary",
+        "input": [
+            {"type": "message", "role": "system", "content": [{"type": "input_text", "text": "sys"}]},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ],
+    }
+
+    forwarded = ResponsesRequest.model_validate(payload).to_payload()
+
+    assert forwarded["instructions"] == "primary\nsys"
+    assert forwarded["input"] == [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+
+
+def test_responses_compact_gpt62_keeps_hoisting_instruction_messages() -> None:
+    payload = {
+        "model": "gpt-6.2-sol",
+        "instructions": "primary",
+        "input": [
+            {"type": "message", "role": "system", "content": [{"type": "input_text", "text": "sys"}]},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ],
+    }
+
+    forwarded = ResponsesCompactRequest.model_validate(payload).to_payload()
+
+    assert forwarded["instructions"] == "primary\nsys"
+    assert forwarded["input"] == [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+
+
+def test_responses_leading_instruction_text_reads_developer_input_message() -> None:
+    request = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-6.2-sol",
+            "input": [
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            ],
+        }
+    )
+
+    assert responses_leading_instruction_text(request) == "sys"
+
+
+def test_responses_leading_instruction_text_skips_lite_prelude() -> None:
+    request = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-6.2-sol",
+            "instructions": "",
+            "input": [
+                {"type": "additional_tools", "role": "developer", "tools": []},
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            ],
+        }
+    )
+
+    assert responses_leading_instruction_text(request) == "sys"
+
+
+@pytest.mark.parametrize("adapter", [ResponsesRequest, V1ResponsesRequest])
+def test_gpt62_string_input_moves_instructions_once(adapter) -> None:
+    request = adapter.model_validate({"model": "gpt-6.2-sol", "instructions": "sys", "input": "hi"})
+    if isinstance(request, V1ResponsesRequest):
+        request = request.to_responses_request()
+    payload = request.to_payload()
+    assert payload["instructions"] == ""
+    assert payload["input"] == [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+    ]
+    assert ResponsesRequest.model_validate(payload).to_payload() == payload
+
+
+def test_v1_gpt62_messages_share_instruction_normalization() -> None:
+    request = V1ResponsesRequest.model_validate(
+        {
+            "model": "gpt-6.2-sol",
+            "instructions": "top",
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "developer", "content": "dev"},
+                {"role": "user", "content": "hi"},
+            ],
+        }
+    ).to_responses_request()
+    assert request.instructions == ""
+    assert request.input == [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "top"}]},
+        {"role": "developer", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "developer", "content": [{"type": "input_text", "text": "dev"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
     ]

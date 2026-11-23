@@ -150,6 +150,8 @@ _RESPONSES_PAYLOAD_FIELDS_WITH_DEDICATED_VALIDATION = frozenset(
 class AccountNeutralReplayProjection:
     input_items: list[JsonValue]
     stored_prefix_count: int
+    leading_instruction_count: int = 0
+    """Validated contiguous developer prefix in the original stored input."""
     canonical_lite_developer_index: int | None = None
     """Projected index of the canonical Responses-Lite developer instruction.
 
@@ -179,9 +181,12 @@ def project_responses_input_for_account_neutral_fresh_replay(
 
     projected_items: list[JsonValue] = []
     projected_stored_count = 0
+    leading_instruction_count = 0
     canonical_lite_developer_index: int | None = None
     prefix_begins_with_lite_tool_bundle = stored_count >= 2 and _is_canonical_lite_tool_bundle(input_items[0])
     for index, item in enumerate(input_items):
+        if index == leading_instruction_count and index < stored_count and _is_leading_instruction_message(item):
+            leading_instruction_count += 1
         projected_item = _project_account_neutral_replay_item(
             item,
             preserve_developer_message_ids=preserve_developer_message_ids,
@@ -205,6 +210,7 @@ def project_responses_input_for_account_neutral_fresh_replay(
     return AccountNeutralReplayProjection(
         input_items=projected_items,
         stored_prefix_count=projected_stored_count,
+        leading_instruction_count=leading_instruction_count,
         canonical_lite_developer_index=canonical_lite_developer_index,
     )
 
@@ -221,6 +227,27 @@ def _is_canonical_lite_tool_bundle(item: JsonValue) -> bool:
 
 def _is_inline_developer_message(item: JsonValue) -> bool:
     return isinstance(item, dict) and item.get("role") == "developer" and item.get("type") != "additional_tools"
+
+
+def _is_leading_instruction_message(item: JsonValue) -> bool:
+    if not isinstance(item, dict):
+        return False
+    item_type = item.get("type")
+    if not _historical_pending_developer_message_is_transparent(
+        item, item_type=item_type if isinstance(item_type, str) else None
+    ):
+        return False
+    content = item.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    return (
+        isinstance(content, list)
+        and bool(content)
+        and all(
+            isinstance(part, dict) and part.get("type") in ("input_text", "text") and isinstance(part.get("text"), str)
+            for part in content
+        )
+    )
 
 
 def _project_account_neutral_replay_item(
@@ -312,6 +339,7 @@ def responses_input_suffix_retains_prior_output(
     *,
     stored_count: int,
     canonical_lite_developer_index: int | None = None,
+    leading_instruction_count: int = 0,
 ) -> bool:
     """Prove that a stored input prefix is followed by prior output and new input."""
 
@@ -320,6 +348,7 @@ def responses_input_suffix_retains_prior_output(
     prefix_state = _direct_tool_call_prefix_state(
         input_items[:stored_count],
         canonical_lite_developer_index=canonical_lite_developer_index,
+        leading_instruction_count=leading_instruction_count,
     )
     if prefix_state is None:
         return False
@@ -402,6 +431,7 @@ def responses_input_suffix_matches_pending_tool_calls(
     stored_count: int,
     pending_tool_calls: Mapping[str, str],
     canonical_lite_developer_index: int | None = None,
+    leading_instruction_count: int = 0,
 ) -> bool:
     """Prove the suffix exactly settles the durable prior-response call manifest."""
 
@@ -411,6 +441,7 @@ def responses_input_suffix_matches_pending_tool_calls(
         input_items[:stored_count],
         allow_historical_developer_interleave=True,
         canonical_lite_developer_index=canonical_lite_developer_index,
+        leading_instruction_count=leading_instruction_count,
     )
     if prefix_state is None or prefix_state[0] or prefix_state[1] & pending_tool_calls.keys():
         return False
@@ -449,6 +480,7 @@ def _direct_tool_call_prefix_state(
     *,
     allow_historical_developer_interleave: bool = False,
     canonical_lite_developer_index: int | None = None,
+    leading_instruction_count: int = 0,
 ) -> tuple[deque[tuple[str, str]], set[str]] | None:
     pending_calls: deque[tuple[str, str]] = deque()
     seen_call_ids: set[str] = set()
@@ -464,6 +496,10 @@ def _direct_tool_call_prefix_state(
         if item_type_value is not None and not isinstance(item_type_value, str):
             return None
         item_type = item_type_value if isinstance(item_type_value, str) else None
+        if index < leading_instruction_count:
+            if not _is_leading_instruction_message(item):
+                return None
+            continue
         if item.get("role") == "developer" and item_type != "additional_tools":
             developer_message_is_transparent = _historical_pending_developer_message_is_transparent(
                 item,

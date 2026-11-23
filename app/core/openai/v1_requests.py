@@ -17,6 +17,7 @@ from app.core.openai.requests import (
     ResponsesReasoning,
     ResponsesRequest,
     ResponsesTextControls,
+    responses_model_caches_instruction_messages,
     validate_passthrough_depth,
     validate_tool_types,
 )
@@ -114,7 +115,11 @@ class V1ResponsesRequest(BaseModel):
 
         if messages is not None:
             try:
-                instruction_text, input_items = coerce_messages(instruction_text, messages)
+                instruction_text, input_items = coerce_messages(
+                    instruction_text,
+                    messages,
+                    preserve_instruction_roles=responses_model_caches_instruction_messages(self.model),
+                )
             except ClientPayloadError:
                 raise
             except ValueError as exc:

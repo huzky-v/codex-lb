@@ -23,6 +23,7 @@ from app.core.openai.requests import (
     ResponsesCompactRequest,
     ResponsesRequest,
     extract_input_file_ids,
+    responses_leading_instruction_text,
     responses_request_contains_goal_continuation_context,
 )
 from app.db.models import StickySessionKind
@@ -372,8 +373,7 @@ def _derive_prompt_cache_anchor(
     model = getattr(payload, "model", None)
     model_class = _extract_model_class(model) if isinstance(model, str) and model else None
     api_key_id = api_key.id if api_key is not None else ""
-    instructions = getattr(payload, "instructions", None)
-    instructions_text = instructions if isinstance(instructions, str) else ""
+    instructions_text = responses_leading_instruction_text(payload)
     readable_parts = [part for part in (model_class, api_key_id[:12] or None) if part]
 
     window = build_thread_window(

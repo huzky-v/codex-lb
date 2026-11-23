@@ -14,6 +14,22 @@ See `openspec/specs/chat-completions-compat/spec.md` for normative requirements.
 - **Usage streaming:** When `stream_options.include_usage` is enabled, usage appears in the final chunk while earlier chunks include `usage: null`.
 - **Obfuscation passthrough:** `stream_options.include_obfuscation` is forwarded to upstream when present.
 
+## Instruction placement ownership
+
+Chat and V1 adapters preserve message roles while converting chat content;
+the shared Responses normalizer rewrites instruction roles and inserts
+top-level instructions once. This keeps cached-prefix placement consistent
+with native Responses requests after API-key model enforcement and source
+resolution, rather than making each adapter independently shape instructions.
+The model boundary and bridge-recovery rationale live in
+`openspec/specs/responses-api-compat/context.md`.
+
+For example, a GPT-6.2 chat request containing `system: "Be concise"` followed
+by `user: "Hello"` maps to a developer input message followed by a user input
+message, with empty top-level `instructions`. GPT-6.1 retains hoisting outside
+JSON object mode. JSON object mode keeps instruction messages in input, using
+their original roles before GPT-6.2 and developer roles from GPT-6.2 onward.
+
 ## Constraints
 
 - Oversized image data URLs (>8MB) are dropped from user inputs.
